@@ -17,8 +17,8 @@ Simple Baselines for Image Restoration
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from arch_util import LayerNorm2d
-from local_arch import Local_Base
+from HifiDiff.models.corase_restoration.NAF.util import LayerNorm2d
+from HifiDiff.models.corase_restoration.NAF.local import Local_Base
 
 
 class SimpleGate(nn.Module):
