@@ -7,3 +7,4 @@ diffusers==0.32.2
 transformers==4.50.1
 tokenizers==0.21.1
 accelerate==1.5.2
+ptflops==0.7.4
