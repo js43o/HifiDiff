@@ -5,7 +5,7 @@ from torch import nn
 from torch.nn import functional as F
 
 
-class STN(nn.Module):
+class STNBlock(nn.Module):
     def __init__(self):
         super(STN, self).__init__()
         self.conv1 = nn.Conv2d(1, 10, kernel_size=5)
