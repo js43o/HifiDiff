@@ -44,8 +44,15 @@ class CoarseRestoration(nn.Module):
         )
 
     def forward(self, x: torch.Tensor):
-        x = self.encoders(x)
+        enc_skips = []
+        for encoder in self.encoders:
+            x = encoder(x)
+            enc_skips.append(x)
+
         x = self.middle_blocks(x)
-        x = self.decoders(x)
+
+        for decoder, enc_skip in zip(self.decoders, enc_skips[::-1]):
+            x = x + enc_skip
+            x = decoder(x)
 
         return x
