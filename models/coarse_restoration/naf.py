@@ -17,8 +17,8 @@ Simple Baselines for Image Restoration
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from naf_utils import LayerNorm2d
-from naf_local import Local_Base
+from .naf_utils import LayerNorm2d
+from .naf_local import Local_Base
 
 
 class SimpleGate(nn.Module):
