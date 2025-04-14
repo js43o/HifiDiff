@@ -1,6 +1,6 @@
 import os
 from PIL import Image
-import torch
+from torchvision.transforms import functional as F
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
@@ -30,14 +30,14 @@ class KfaceDataset(Dataset):
                         )
 
                         if angle == 7:  # frontal face
-                            self.gt_imgs.extend([img] * 20)
-                            self.gt_metas.extend([meta] * 20)
+                            self.gt_imgs.extend([img] * 19)
+                            self.gt_metas.extend([meta] * 19)
                         else:
                             self.input_imgs.append(img)
                             self.input_metas.append(meta)
 
     def __getitem__(self, index):
-        print("processing image: #%d/%d" %(index, len(self.ids) * len(LIGHT_CONDITION) * len(EXPRESSION_CONDITION) * 19))
+        # print("processing image # %d (total %d)" %(index, len(self.ids) * len(LIGHT_CONDITION) * len(EXPRESSION_CONDITION) * 19))
         input_img = Image.open(self.input_imgs[index]).convert("RGB")
         input_meta = open(self.input_metas[index], "r").readlines()
         gt_img = Image.open(self.gt_imgs[index]).convert("RGB")
@@ -45,18 +45,14 @@ class KfaceDataset(Dataset):
         
         left, top, width, height = map(int, input_meta[7].split("\t"))
         input_img = input_img.crop((left, top, left + width, top + height))
-        input_img = input_img.resize((32, 32))
+        input_img = input_img.resize((32, 32))  # make it low-resolution
+        input_img = input_img.resize((128, 128))
         
         left, top, width, height = map(int, gt_meta[7].split("\t"))
         gt_img = gt_img.crop((left, top, left + width, top + height))
         gt_img = gt_img.resize((128, 128))
         
-        return input_img, gt_img
+        return F.to_tensor(input_img), F.to_tensor(gt_img)
 
     def __len__(self):
         return len(self.input_imgs)
-
-
-dataset = KfaceDataset("../datasets/kface", use="test")
-
-print(list(dataset))
