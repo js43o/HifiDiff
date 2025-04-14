@@ -1,5 +1,5 @@
 import torch
-from models.coarse_restoration.cr_model import CoarseRestoration
+from models.cr.model import CoarseRestoration
 
 model = CoarseRestoration()
 
