@@ -5,4 +5,7 @@ __pycache__/
 *.jpeg
 *.bmp
 
+checkpoints/
+output/
+
 temp*
