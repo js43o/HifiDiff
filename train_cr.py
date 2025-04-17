@@ -39,20 +39,21 @@ def train_loop(dataloader, model, loss_fn, optimizer, current_epoch, loss_histor
             save_image(result, os.path.join("output/%d" % current_epoch, "%d.jpg" % (batch_idx + 1)))
 
 
-def test_loop(dataloader, model, loss_fn, loss_history=None):
-    test_loss = 0
+def val_loop(dataloader, model, loss_fn, loss_history=None):
+    acc_loss = 0
     model.eval()
 
     with torch.no_grad():
         for batch, (x, y, y_patches) in enumerate(dataloader):
             x, y, y_patches = x.to(device), y.to(device), y_patches.to(device)
             pred = model(x)
-            test_loss += loss_fn(pred, y, y_patches).item()
+            loss = loss_fn(pred, y, y_patches).item()
+            acc_loss += loss
+            loss_history.append(loss)
 
-    test_loss /= len(dataloader)
-    loss_history.append(test_loss)
+    acc_loss /= len(dataloader)
 
-    print("test loss: %.4f" % (test_loss))
+    print("avg_loss: %.4f" % (acc_loss))
 
 
 LEARNING_RATE = 5e-4
@@ -63,7 +64,7 @@ train_dataset = KfaceDataset(
     dataroot="../../datasets/kface",
     use="train",
 )
-test_dataset = KfaceDataset(
+val_dataset = KfaceDataset(
     dataroot="../../datasets/kface",
     use="val",
 )
@@ -71,10 +72,10 @@ test_dataset = KfaceDataset(
 train_dataloader = DataLoader(
     dataset=train_dataset, batch_size=BATCH_SIZE, shuffle=True
 )
-test_dataloader = DataLoader(dataset=test_dataset, batch_size=BATCH_SIZE)
+val_dataloader = DataLoader(dataset=val_dataset, batch_size=BATCH_SIZE)
 
 model = CoarseRestoration().to(device=device)
-loss_fn = cr_loss  # 임시 Loss 함수
+loss_fn = cr_loss
 optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 train_losses = [0.0]
 
@@ -83,9 +84,9 @@ for epoch in range(EPOCHS):
     train_loop(
         dataloader=train_dataloader, model=model, loss_fn=loss_fn, optimizer=optimizer, current_epoch=epoch, loss_history=train_losses
     )
-    test_loop(dataloader=test_dataloader, model=model, loss_fn=loss_fn, loss_history=train_losses)
+    val_loop(dataloader=val_dataloader, model=model, loss_fn=loss_fn, loss_history=train_losses)
     
-    if epoch % 10 == 0:
+    if epoch % 10 == 0 or epoch == EPOCHS:
         torch.save({
             'epoch': epoch,
             'model_state_dict': model.state_dict(),
