@@ -14,7 +14,7 @@ class NAF_STN_Block(nn.Module):
             self.sampling = nn.Conv2d(in_channel, in_channel*2, 2, 2)
         elif sampling == "up":
             self.sampling = nn.Sequential(
-                    nn.Conv2d(in_channel,in_channel*2, 1, bias=False),
+                    nn.Conv2d(in_channel, in_channel*2, 1, bias=False),
                     nn.PixelShuffle(2)
                 )
         else:
@@ -22,7 +22,7 @@ class NAF_STN_Block(nn.Module):
 
     def forward(self, x: torch.Tensor):
         x = self.nfbs(x)
-        # x = self.stn(x)
+        x = self.stn(x)
         x = self.sampling(x)
 
         return x

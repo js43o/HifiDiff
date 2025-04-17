@@ -5,6 +5,7 @@ import torch
 import numpy as np
 from torch.utils.data import Dataset
 from torchvision.transforms import functional as F
+from torchvision.utils import save_image
 
 LIGHT_CONDITION = ["L1", "L3", "L6"]
 EXPRESSION_CONDITION = ["E01", "E02", "E03"]
@@ -12,14 +13,20 @@ EXPRESSION_CONDITION = ["E01", "E02", "E03"]
 
 def get_masked_patches(y, y_meta: List[str]):
     patches = []
+    y_width, y_height = y.size
+    y = y.resize((128, 128), resample=Image.Resampling.LANCZOS)
     y = np.array(y)
+    
+    head_left, head_top, _, _ = map(int, y_meta[7].split("\t"))
     for line in y_meta[8:12]:   # eye_r, eye_l, nose, mouth
-        mask = np.zeros_like(y)
+        mask = np.zeros((y_height, y_width), dtype=np.uint8)
         left, top, width, height = map(int, line.split("\t"))
-        mask[top:top+height, left:left+width] = 1
+        mask[top-head_top:top+height-head_top, left-head_left:left+width-head_left] = 1
+        mask = Image.fromarray(mask)
+        mask = mask.resize((128, 128), resample=Image.Resampling.NEAREST)
+        mask = np.array(mask)[..., np.newaxis]
         
-        patch = Image.fromarray(y * mask)
-        patch = patch.resize((128, 128), resample=Image.Resampling.LANCZOS)
+        patch = y * mask
         patch = F.to_tensor(patch)
         
         patches.append(patch)
@@ -72,7 +79,6 @@ class KfaceDataset(Dataset):
         input_meta = open(self.input_metas[index], "r").readlines()
         gt_img = Image.open(self.gt_imgs[index]).convert("RGB")
         gt_meta = open(self.gt_metas[index], "r").readlines()
-        gt_patches = get_masked_patches(gt_img, gt_meta)
 
         left, top, width, height = map(int, input_meta[7].split("\t"))
         input_img = input_img.crop((left, top, left + width, top + height))
@@ -81,6 +87,7 @@ class KfaceDataset(Dataset):
 
         left, top, width, height = map(int, gt_meta[7].split("\t"))
         gt_img = gt_img.crop((left, top, left + width, top + height))
+        gt_patches = get_masked_patches(gt_img, gt_meta)
         gt_img = gt_img.resize((128, 128))
 
         return F.to_tensor(input_img), F.to_tensor(gt_img), torch.stack(gt_patches)  # GT 바운딩 박스 정보 필요

@@ -1,5 +1,4 @@
 from torch.nn import functional as F
-from torchvision.utils import save_image
 
 def key_region_loss(pred, y, y_patches):
   loss = 0
@@ -7,6 +6,7 @@ def key_region_loss(pred, y, y_patches):
     for y_patch in y_patches[batch]:
       mask = y_patch > 0
       pred_patch = pred[batch] * mask
+      
       loss += F.mse_loss(pred_patch, y_patch)
   
   return loss / y.shape[0]

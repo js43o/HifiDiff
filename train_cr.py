@@ -8,7 +8,7 @@ from models.cr.model import CoarseRestoration
 from models.cr.loss import cr_loss
 
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "5"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -28,7 +28,6 @@ def train_loop(dataloader, model, loss_fn, optimizer, current_epoch, loss_histor
         optimizer.step()
         optimizer.zero_grad()
 
-        # if (batch_idx + 1) % 100 == 0:
         print(
             "loss=%.4f (batch: %d/%d)" % (loss, (batch_idx + 1) * BATCH_SIZE, num_data)
         )
