@@ -16,19 +16,22 @@ def get_masked_patches(y, y_meta: List[str]):
     y_width, y_height = y.size
     y = y.resize((128, 128), resample=Image.Resampling.LANCZOS)
     y = np.array(y)
-    
+
     head_left, head_top, _, _ = map(int, y_meta[7].split("\t"))
-    for line in y_meta[8:12]:   # eye_r, eye_l, nose, mouth
+    for line in y_meta[8:12]:  # eye_r, eye_l, nose, mouth
         mask = np.zeros((y_height, y_width), dtype=np.uint8)
         left, top, width, height = map(int, line.split("\t"))
-        mask[top-head_top:top+height-head_top, left-head_left:left+width-head_left] = 1
+        mask[
+            top - head_top : top + height - head_top,
+            left - head_left : left + width - head_left,
+        ] = 1
         mask = Image.fromarray(mask)
         mask = mask.resize((128, 128), resample=Image.Resampling.NEAREST)
         mask = np.array(mask)[..., np.newaxis]
-        
+
         patch = y * mask
         patch = F.to_tensor(patch)
-        
+
         patches.append(patch)
 
     return patches
@@ -90,7 +93,43 @@ class KfaceDataset(Dataset):
         gt_patches = get_masked_patches(gt_img, gt_meta)
         gt_img = gt_img.resize((128, 128))
 
-        return F.to_tensor(input_img), F.to_tensor(gt_img), torch.stack(gt_patches)  # GT 바운딩 박스 정보 필요
+        return F.to_tensor(input_img), F.to_tensor(gt_img), torch.stack(gt_patches)
 
     def __len__(self):
         return len(self.input_imgs)
+
+
+class KfaceDataset_HFOnly(Dataset):
+    def __init__(self, dataroot: str, use="train"):
+        super().__init__()
+        self.dataroot = os.path.join(dataroot, use)
+        self.ids = os.listdir(self.dataroot)
+
+        self.imgs = []
+        self.metas = []
+
+        for id in self.ids:
+            for light in LIGHT_CONDITION:
+                for expression in EXPRESSION_CONDITION:
+                    img = os.path.join(
+                        self.dataroot, id, "S001", light, expression, "C7.jpg"
+                    )
+                    meta = os.path.join(
+                        self.dataroot, id, "S001", light, expression, "C7.txt"
+                    )
+
+                    self.imgs.append(img)
+                    self.metas.append(meta)
+
+    def __getitem__(self, index):
+        img = Image.open(self.imgs[index]).convert("RGB")
+        meta = open(self.input_metas[index], "r").readlines()
+
+        left, top, width, height = map(int, meta[7].split("\t"))
+        img = img.crop((left, top, left + width, top + height))
+        img = img.resize((128, 128))
+
+        return F.to_tensor(img)
+
+    def __len__(self):
+        return len(self.imgs)
