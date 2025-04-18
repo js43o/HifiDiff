@@ -7,8 +7,7 @@ from dataset import KfaceDataset
 from models.cr.model import CoarseRestoration
 from models.cr.loss import cr_loss
 
-
-# os.environ["CUDA_VISIBLE_DEVICES"] = "5"
+os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -86,7 +85,7 @@ for epoch in range(EPOCHS):
     )
     val_loop(dataloader=val_dataloader, model=model, loss_fn=loss_fn, loss_history=train_losses)
     
-    if epoch % 10 == 0 or epoch == EPOCHS:
+    if epoch % 10 == 0 or epoch == EPOCHS - 1:
         torch.save({
             'epoch': epoch,
             'model_state_dict': model.state_dict(),

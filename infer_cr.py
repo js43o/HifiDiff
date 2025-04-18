@@ -8,7 +8,7 @@ from models.cr.model import CoarseRestoration
 from models.cr.loss import cr_loss
 
 
-# os.environ["CUDA_VISIBLE_DEVICES"] = "5"
+os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
