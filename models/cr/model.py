@@ -1,6 +1,7 @@
 import torch
 from torch import nn
-from models.common.naf import NAFBlock
+
+from .naf import NAFBlock
 from .stn import STNBlock
 
 

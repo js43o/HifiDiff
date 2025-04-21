@@ -1,33 +1,26 @@
 # ------------------------------------------------------------------------
-# Copyright (c) 2022 megvii-model. All Rights Reserved.
-# https://github.com/megvii-research/NAFNet/blob/main/basicsr/models/archs/NAFNet_arch.py
+# Copyright (c) 2023 Giordano Cicchetti. All Rights Reserved.
+# https://github.com/ispamm/NAF-DPM/blob/main/Deblurring/model/ConditionalNAFNET.py
 # ------------------------------------------------------------------------
 
-"""
-Simple Baselines for Image Restoration
-
-@article{chen2022simple,
-  title={Simple Baselines for Image Restoration},
-  author={Chen, Liangyu and Chu, Xiaojie and Zhang, Xiangyu and Sun, Jian},
-  journal={arXiv preprint arXiv:2204.04676},
-  year={2022}
-}
-"""
-
 import torch
-import torch.nn as nn
-from .naf_utils import LayerNorm2d
+from torch import nn
+from einops import rearrange
+
+from utils import SimpleGate, LayerNorm2d
 
 
-class SimpleGate(nn.Module):
-    def forward(self, x):
-        x1, x2 = x.chunk(2, dim=1)
-        return x1 * x2
-
-
-class NAFBlock(nn.Module):
-    def __init__(self, c, DW_Expand=2, FFN_Expand=2, drop_out_rate=0.0):
+class ConditionalNAFBlock(nn.Module):
+    def __init__(
+        self, c, time_emb_dim=None, DW_Expand=2, FFN_Expand=2, drop_out_rate=0.0
+    ):
         super().__init__()
+        self.mlp = (
+            nn.Sequential(SimpleGate(), nn.Linear(time_emb_dim // 2, c * 4))
+            if time_emb_dim
+            else None
+        )
+
         dw_channel = c * DW_Expand
         self.conv1 = nn.Conv2d(
             in_channels=c,
@@ -107,11 +100,19 @@ class NAFBlock(nn.Module):
         self.beta = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
         self.gamma = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
 
-    def forward(self, inp):
+    def time_forward(self, time, mlp):
+        time_emb = mlp(time)
+        time_emb = rearrange(time_emb, "b c -> b c 1 1")
+        return time_emb.chunk(4, dim=1)
+
+    def forward(self, x):
+        inp, time = x
+        shift_att, scale_att, shift_ffn, scale_ffn = self.time_forward(time, self.mlp)
+
         x = inp
 
         x = self.norm1(x)
-
+        x = x * (scale_att + 1) + shift_att
         x = self.conv1(x)
         x = self.conv2(x)
         x = self.sg(x)
@@ -122,10 +123,14 @@ class NAFBlock(nn.Module):
 
         y = inp + x * self.beta
 
-        x = self.conv4(self.norm2(y))
+        x = self.norm2(y)
+        x = x * (scale_ffn + 1) + shift_ffn
+        x = self.conv4(x)
         x = self.sg(x)
         x = self.conv5(x)
 
         x = self.dropout2(x)
 
-        return y + x * self.gamma
+        x = y + x * self.gamma
+
+        return x, time

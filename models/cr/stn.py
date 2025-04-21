@@ -9,7 +9,7 @@ import math
 class STNBlock(nn.Module):
     def __init__(self, in_ch, in_res):
         super().__init__()
-        
+
         kernel_sizes = (
             (3, 1)
             if in_res <= 8
