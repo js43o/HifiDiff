@@ -8,15 +8,19 @@ from tqdm.auto import tqdm
 from torchvision.utils import save_image
 
 from models.denoiser.model import Denoiser
-from dataset import KfaceDataset_HROnly
+from dataset import KfaceDataset_HROnly, CelebADataset
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "5"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 
 
 device = "cuda"
 save_model_epochs = 10
 save_image_epochs = 1
 num_epochs = 50
+
+TRY_NUM = 2
+os.makedirs("./checkpoints/denoiser/%d" % TRY_NUM, exist_ok=True)
+os.makedirs("./output/denoiser/%d" % TRY_NUM, exist_ok=True)
 
 
 def make_grid(images, rows, cols):
@@ -27,35 +31,14 @@ def make_grid(images, rows, cols):
     return grid
 
 
-def evaluate(epoch, pipeline):
-    # 랜덤한 노이즈로 부터 이미지를 추출합니다.(이는 역전파 diffusion 과정입니다.)
-    # 기본 파이프라인 출력 형태는 `List[PIL.Image]` 입니다.
-    eval_batch_size = 8
-    seed = 0
-    output_dir = "output/denoiser"
-
-    images = pipeline(
-        batch_size=eval_batch_size,
-        generator=torch.manual_seed(seed),
-    ).images
-
-    # 이미지들을 그리드로 만들어줍니다.
-    image_grid = make_grid(images, rows=4, cols=4)
-
-    # 이미지들을 저장합니다.
-    test_dir = os.path.join(output_dir, "samples")
-    os.makedirs(test_dir, exist_ok=True)
-    image_grid.save(f"{test_dir}/{epoch:04d}.png")
-
-
 @torch.no_grad()
 def ddim_sample(
     model,  # 훈련된 커스텀 모델
     vae,  # VAE 디코더
     epoch,
     num_images=8,  # 배치 크기
-    num_inference_steps=150,
-    save_dir="output/denoiser",
+    num_inference_steps=50,
+    save_dir="output/denoiser/%d" % TRY_NUM,
 ):
     # latent 크기
     latent_height = 16
@@ -153,13 +136,14 @@ def train_loop(model, noise_scheduler, vae, optimizer, train_dataloader, lr_sche
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
                 },
-                "./checkpoints/denoiser/%d.pt" % epoch + 1,
+                "./checkpoints/denoiser/%d/%d.pt" % (TRY_NUM, epoch + 1),
             )
 
 
-train_dataset = KfaceDataset_HROnly(
-    dataroot="../../datasets/kface",
-    use="train",
+train_dataset_kface = KfaceDataset_HROnly(dataroot="../../datasets/kface", use="train")
+train_dataset_celeba = CelebADataset(dataroot="../../datasets/celeba_hq_256")
+train_dataset = torch.utils.data.ConcatDataset(
+    [train_dataset_kface, train_dataset_celeba]
 )
 train_dataloader = torch.utils.data.DataLoader(
     train_dataset, batch_size=8, shuffle=True

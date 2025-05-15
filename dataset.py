@@ -235,3 +235,22 @@ class KfaceDataset_IDC(Dataset):
 
     def __len__(self):
         return len(self.input_imgs)
+
+
+class CelebADataset(Dataset):
+    def __init__(self, dataroot: str):
+        super().__init__()
+        self.dataroot = os.path.join(dataroot)
+        self.imgs = []
+
+        for filename in os.listdir(self.dataroot):
+            self.imgs.append(os.path.join(self.dataroot, filename))
+
+    def __getitem__(self, index):
+        img = Image.open(self.imgs[index]).convert("RGB")
+        img = img.resize((128, 128))
+
+        return F.to_tensor(img)
+
+    def __len__(self):
+        return len(self.imgs)
