@@ -248,6 +248,7 @@ class CelebADataset(Dataset):
 
     def __getitem__(self, index):
         img = Image.open(self.imgs[index]).convert("RGB")
+        img = img.crop((0, 20, 178, 198))
         img = img.resize((128, 128))
 
         return F.to_tensor(img)

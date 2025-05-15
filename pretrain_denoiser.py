@@ -141,7 +141,7 @@ def train_loop(model, noise_scheduler, vae, optimizer, train_dataloader, lr_sche
 
 
 train_dataset_kface = KfaceDataset_HROnly(dataroot="../../datasets/kface", use="train")
-train_dataset_celeba = CelebADataset(dataroot="../../datasets/celeba_hq_256")
+train_dataset_celeba = CelebADataset(dataroot="../../datasets/celeba_aligned")
 train_dataset = torch.utils.data.ConcatDataset(
     [train_dataset_kface, train_dataset_celeba]
 )
