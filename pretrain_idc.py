@@ -1,13 +1,13 @@
-import os
 import torch
 from torch.utils.data import DataLoader
 from torch.nn.functional import triplet_margin_loss
+from torchvision.utils import save_image
 
 from dataset import KfaceDataset_IDC
 from models.cr.model import CoarseRestoration
 from models.idc.model import ResNet50
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "5"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -31,8 +31,14 @@ def train_loop(
         optimizer.zero_grad()
 
         print(
-            "loss=%.4f (batch: %d/%d)" % (loss, (batch_idx + 1) * BATCH_SIZE, num_data)
+            "loss=%.8f (epoch=%d / batch=%d/%d)"
+            % (loss, current_epoch + 1, (batch_idx + 1) * BATCH_SIZE, num_data)
         )
+
+        if (batch_idx + 1) % 100 == 0:
+            output = torch.concat((cr_pred, y, other))
+            # print("😮 OUTPUT:", cr_pred.shape, y.shape, output.shape, id_cr.shape)
+            save_image(output, "output/idc/%d.png" % batch_idx)
 
 
 def val_loop(dataloader, cr_module, model, loss_fn, loss_history=None):
@@ -78,7 +84,7 @@ cr_checkpoint = torch.load(CR_CHECKPOINT_PATH)
 cr_module.load_state_dict(cr_checkpoint["model_state_dict"])
 cr_module.eval()
 
-model = ResNet50()
+model = ResNet50().to(device=device)
 idc_loss = triplet_margin_loss
 optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 train_losses = [0.0]
@@ -102,15 +108,15 @@ for epoch in range(EPOCHS):
         loss_history=train_losses,
     )
 
-    if epoch % 10 == 0 or epoch == EPOCHS - 1:
+    if (epoch + 1) % 10 == 0 or (epoch + 1) == EPOCHS:
         torch.save(
             {
-                "epoch": epoch,
+                "epoch": epoch + 1,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
                 "loss": train_losses[-1],
             },
-            "./checkpoints/%d.pt" % epoch,
+            "./checkpoints/idc/%d.pt" % (epoch + 1),
         )
 
 print("✅ Done!")

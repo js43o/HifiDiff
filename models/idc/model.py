@@ -100,7 +100,7 @@ class Block(nn.Module):
 
 
 class ResNet(nn.Module):
-    def __init__(self, ResBlock, layer_list, num_classes, num_channels=3):
+    def __init__(self, ResBlock, layer_list, num_channels=3):
         super(ResNet, self).__init__()
         self.in_channels = 64
 
@@ -162,5 +162,5 @@ class ResNet(nn.Module):
         return nn.Sequential(*layers)
 
 
-def ResNet50(num_classes, channels=3):
-    return ResNet(Bottleneck, [3, 4, 6, 3], num_classes, channels)
+def ResNet50(channels=3):
+    return ResNet(Bottleneck, [3, 4, 6, 3], channels)

@@ -151,7 +151,9 @@ class KfaceDataset_IDC(Dataset):
     def __init__(self, dataroot: str, use="train"):
         super().__init__()
         self.dataroot = os.path.join(dataroot, use)
-        self.ids = shuffle(os.listdir(self.dataroot))
+        self.ids = os.listdir(self.dataroot)
+        shuffle(self.ids)
+        self.ids.extend(self.ids[:19])  # loop for the last 19 persons
 
         self.input_imgs = []
         self.input_metas = []
@@ -188,14 +190,14 @@ class KfaceDataset_IDC(Dataset):
                             self.input_imgs.append(img)
                             self.input_metas.append(meta)
 
-                    for idx_other in range(len(self.ids + 1), len(self.ids + 20)):
+                    for idx_other in range(idx + 1, idx + 20):
                         img = os.path.join(
                             self.dataroot,
                             self.ids[idx_other],
                             "S001",
                             light,
                             expression,
-                            "C7.jpg" % angle,
+                            "C7.jpg",
                         )
                         meta = os.path.join(
                             self.dataroot,
@@ -203,7 +205,7 @@ class KfaceDataset_IDC(Dataset):
                             "S001",
                             light,
                             expression,
-                            "C7.txt" % angle,
+                            "C7.txt",
                         )
 
                         self.other_imgs.append(img)
