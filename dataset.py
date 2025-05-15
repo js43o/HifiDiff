@@ -99,7 +99,7 @@ class KfaceDataset(Dataset):
         return len(self.input_imgs)
 
 
-class KfaceDataset_HFOnly(Dataset):
+class KfaceDataset_HROnly(Dataset):
     def __init__(self, dataroot: str, use="train"):
         super().__init__()
         self.dataroot = os.path.join(dataroot, use)
@@ -111,19 +111,30 @@ class KfaceDataset_HFOnly(Dataset):
         for id in self.ids:
             for light in LIGHT_CONDITION:
                 for expression in EXPRESSION_CONDITION:
-                    img = os.path.join(
-                        self.dataroot, id, "S001", light, expression, "C7.jpg"
-                    )
-                    meta = os.path.join(
-                        self.dataroot, id, "S001", light, expression, "C7.txt"
-                    )
-
-                    self.imgs.append(img)
-                    self.metas.append(meta)
+                    for angle in range(1, 21):
+                        img = os.path.join(
+                            self.dataroot,
+                            id,
+                            "S001",
+                            light,
+                            expression,
+                            "C%s.jpg" % angle,
+                        )
+                        meta = os.path.join(
+                            self.dataroot,
+                            id,
+                            "S001",
+                            light,
+                            expression,
+                            "C%s.txt" % angle,
+                        )
+                        self.imgs.append(img)
+                        self.metas.append(meta)
 
     def __getitem__(self, index):
+        # print("processing image # %d (total %d)" %(index, len(self.ids) * len(LIGHT_CONDITION) * len(EXPRESSION_CONDITION) * 19))
         img = Image.open(self.imgs[index]).convert("RGB")
-        meta = open(self.input_metas[index], "r").readlines()
+        meta = open(self.metas[index], "r").readlines()
 
         left, top, width, height = map(int, meta[7].split("\t"))
         img = img.crop((left, top, left + width, top + height))

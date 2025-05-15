@@ -3,7 +3,7 @@ import torch
 from torch import nn
 
 from utils import SimpleGate
-from conditional_naf import ConditionalNAFBlock
+from .conditional_naf import ConditionalNAFBlock
 
 
 # sinusoidal positional embeds
@@ -26,10 +26,10 @@ class Denoiser(nn.Module):
     def __init__(self):
         super().__init__()
 
-        img_channel = 3 * 2  # concat input and cond
+        latent_channel = 4
         width = 32
 
-        self.img_channel = img_channel
+        self.latent_channel = latent_channel
         self.upscale = 1
         fourier_dim = width
         sinu_pos_emb = SinusoidalPosEmb(fourier_dim)
@@ -43,7 +43,7 @@ class Denoiser(nn.Module):
         )
 
         self.intro = nn.Conv2d(
-            in_channels=img_channel,
+            in_channels=latent_channel,
             out_channels=width,
             kernel_size=3,
             padding=1,
@@ -53,7 +53,7 @@ class Denoiser(nn.Module):
         )
         self.ending = nn.Conv2d(
             in_channels=width,
-            out_channels=img_channel // 2,
+            out_channels=latent_channel,
             kernel_size=3,
             padding=1,
             stride=1,
@@ -94,15 +94,15 @@ class Denoiser(nn.Module):
                 )
             )
 
-    def forward(self, inp, time, cond=None):
-        if isinstance(time, int) or isinstance(time, float):
-            time = torch.tensor([time]).to(inp.device)
+    def forward(self, latents, timesteps, cond=None):
+        if isinstance(timesteps, int) or isinstance(timesteps, float):
+            timesteps = torch.tensor([timesteps])
 
-        x = inp
-        x = torch.cat([x, cond], dim=1)
+        x = latents
+        # x = torch.cat([x, cond], dim=1)
         B, C, H, W = x.shape
 
-        t = self.time_mlp(time)
+        t = self.time_mlp(timesteps)
         x = self.intro(x)
 
         enc_skips = []
