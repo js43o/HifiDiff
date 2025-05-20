@@ -38,7 +38,7 @@ def train_loop(
         if (batch_idx + 1) % 100 == 0:
             output = torch.concat((cr_pred, y, other))
             # print("😮 OUTPUT:", cr_pred.shape, y.shape, output.shape, id_cr.shape)
-            save_image(output, "output/idc/%d.png" % batch_idx)
+            save_image(output, "output/idc/%d.png" % (batch_idx + 1))
 
 
 def val_loop(dataloader, cr_module, model, loss_fn, loss_history=None):
@@ -108,7 +108,7 @@ for epoch in range(EPOCHS):
         loss_history=train_losses,
     )
 
-    if (epoch + 1) % 10 == 0 or (epoch + 1) == EPOCHS:
+    if (epoch + 1) % 5 == 0 or (epoch + 1) == EPOCHS:
         torch.save(
             {
                 "epoch": epoch + 1,

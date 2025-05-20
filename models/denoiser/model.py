@@ -30,7 +30,6 @@ class Denoiser(nn.Module):
         width = 32
 
         self.latent_channel = latent_channel
-        self.upscale = 1
         fourier_dim = width
         sinu_pos_emb = SinusoidalPosEmb(fourier_dim)
         time_dim = width * 4

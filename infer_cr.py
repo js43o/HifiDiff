@@ -8,7 +8,7 @@ from models.cr.model import CoarseRestoration
 from models.cr.loss import cr_loss
 
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "5"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -22,7 +22,7 @@ def infer_loop(dataloader, model, loss_fn):
             pred = model(x)
             loss = loss_fn(pred, y, y_patches).item()
             acc_loss += loss
-            
+
             result = torch.cat([x[0], pred[0], y[0]], dim=-1)
             if not os.path.exists("output/infer"):
                 os.makedirs("output/infer")
@@ -34,7 +34,7 @@ def infer_loop(dataloader, model, loss_fn):
     print("✅ done! (avg_loss=%.4f)" % (acc_loss))
 
 
-CHECKPOINT_PATH = 'checkpoints/20.pt'
+CHECKPOINT_PATH = "checkpoints/20.pt"
 BATCH_SIZE = 8
 
 infer_dataset = KfaceDataset(
@@ -47,7 +47,7 @@ model = CoarseRestoration().to(device=device)
 loss_fn = cr_loss
 
 checkpoint = torch.load(CHECKPOINT_PATH)
-model.load_state_dict(checkpoint['model_state_dict'])
+model.load_state_dict(checkpoint["model_state_dict"])
 model.eval()
 
 infer_loop(dataloader=infer_dataloader, model=model, loss_fn=loss_fn)
