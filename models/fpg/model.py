@@ -45,7 +45,7 @@ class FacialPriorGuidance(nn.Module):
 
     def forward(self, x: torch.Tensor):
         enc_skips = []
-        results = []
+        priors = []
 
         x = self.intro(x)
         for encoder, down in zip(self.encoders, self.downs):
@@ -54,11 +54,11 @@ class FacialPriorGuidance(nn.Module):
             x = down(x)
 
         x = self.convs[0](x)
-        results.append(x)
+        priors.append(x)
 
         for conv, enc_skip in zip(self.convs[1:], enc_skips[::-1]):
             x = conv(x)
             x = x + enc_skip
-            results.append(x)
+            priors.append(x)
 
-        return results
+        return priors

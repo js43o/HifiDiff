@@ -4,6 +4,7 @@ from torch import nn
 
 from utils import SimpleGate
 from .conditional_naf import ConditionalNAFBlock
+from ..fpg.hca import HybridCrossAttention
 
 
 # sinusoidal positional embeds
@@ -23,16 +24,16 @@ class SinusoidalPosEmb(nn.Module):
 
 
 class Denoiser(nn.Module):
-    def __init__(self):
+    def __init__(self, latent_res):
         super().__init__()
 
-        latent_channel = 4
-        width = 32
+        self.latent_channel = 4
+        self.latent_res = latent_res
+        self.width = 32
 
-        self.latent_channel = latent_channel
-        fourier_dim = width
+        fourier_dim = self.width
         sinu_pos_emb = SinusoidalPosEmb(fourier_dim)
-        time_dim = width * 4
+        time_dim = self.width * 4
 
         self.time_mlp = nn.Sequential(
             sinu_pos_emb,
@@ -42,8 +43,8 @@ class Denoiser(nn.Module):
         )
 
         self.intro = nn.Conv2d(
-            in_channels=latent_channel,
-            out_channels=width,
+            in_channels=self.latent_channel,
+            out_channels=self.width,
             kernel_size=3,
             padding=1,
             stride=1,
@@ -51,8 +52,8 @@ class Denoiser(nn.Module):
             bias=True,
         )
         self.ending = nn.Conv2d(
-            in_channels=width,
-            out_channels=latent_channel,
+            in_channels=self.width,
+            out_channels=self.latent_channel,
             kernel_size=3,
             padding=1,
             stride=1,
@@ -65,8 +66,9 @@ class Denoiser(nn.Module):
         self.middle_blks = nn.ModuleList()
         self.ups = nn.ModuleList()
         self.downs = nn.ModuleList()
+        self.hcas = nn.ModuleList()
 
-        chan = width
+        chan = self.width
         for num in [2, 2, 4, 8]:
             self.encoders.append(
                 nn.Sequential(
@@ -79,8 +81,12 @@ class Denoiser(nn.Module):
         self.middle_blks = nn.Sequential(
             *[ConditionalNAFBlock(chan, time_dim) for _ in range(8)]
         )
+        self.idc_conv = nn.Conv2d(
+            2048, (self.width * (2**4)) * (self.latent_res // (2**4)) ** 2, (1, 1)
+        )
+        self.hcas.append(HybridCrossAttention(chan, self.latent_res // (2**4)))
 
-        for num in [2, 2, 2, 2]:
+        for idx, num in enumerate([2, 2, 2, 2]):
             self.ups.append(
                 nn.Sequential(
                     nn.Conv2d(chan, chan * 2, 1, bias=False), nn.PixelShuffle(2)
@@ -92,14 +98,16 @@ class Denoiser(nn.Module):
                     *[ConditionalNAFBlock(chan, time_dim) for _ in range(num)]
                 )
             )
+            self.hcas.append(
+                HybridCrossAttention(chan, self.latent_res // (2 ** (4 - idx)))
+            )
 
-    def forward(self, latents, timesteps, cond=None):
+    def forward(self, latents, timesteps, facial_priors=None, identity_embedding=None):
         if isinstance(timesteps, int) or isinstance(timesteps, float):
             timesteps = torch.tensor([timesteps])
 
         x = latents
-        # x = torch.cat([x, cond], dim=1)
-        B, C, H, W = x.shape
+        batch, _, height, width = x.shape
 
         t = self.time_mlp(timesteps)
         x = self.intro(x)
@@ -111,12 +119,20 @@ class Denoiser(nn.Module):
             x = down(x)
 
         x, _ = self.middle_blks([x, t])
-        for decoder, up, enc_skip in zip(self.decoders, self.ups, enc_skips[::-1]):
+        idc = self.idc_conv(identity_embedding)
+        x = x + idc.reshape(batch, *x.shape[1:])
+
+        x = self.hcas[0](facial_priors[0], x)
+
+        for decoder, up, hca, facial_prior, enc_skip in zip(
+            self.decoders, self.ups, self.hcas[1:], facial_priors[1:], enc_skips[::-1]
+        ):
             x = up(x)
             x = x + enc_skip
             x, _ = decoder([x, t])
+            x = hca(facial_prior, x)
 
         x = self.ending(x)
-        x = x[..., :H, :W]
+        x = x[..., :height, :width]
 
         return x
