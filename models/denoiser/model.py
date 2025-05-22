@@ -119,10 +119,13 @@ class Denoiser(nn.Module):
             x = down(x)
 
         x, _ = self.middle_blks([x, t])
-        idc = self.idc_conv(identity_embedding)
-        x = x + idc.reshape(batch, *x.shape[1:])
 
-        x = self.hcas[0](facial_priors[0], x)
+        if identity_embedding is not None:  # main training
+            idc = self.idc_conv(identity_embedding)
+            x = x + idc.reshape(batch, *x.shape[1:])
+
+        if facial_priors is not None:  # main training
+            x = self.hcas[0](facial_priors[0], x)
 
         for decoder, up, hca, facial_prior, enc_skip in zip(
             self.decoders, self.ups, self.hcas[1:], facial_priors[1:], enc_skips[::-1]
@@ -130,7 +133,8 @@ class Denoiser(nn.Module):
             x = up(x)
             x = x + enc_skip
             x, _ = decoder([x, t])
-            x = hca(facial_prior, x)
+            if facial_prior is not None:  # main training
+                x = hca(facial_prior, x)
 
         x = self.ending(x)
         x = x[..., :height, :width]
