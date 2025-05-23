@@ -119,7 +119,6 @@ class Denoiser(nn.Module):
             x = down(x)
 
         x, _ = self.middle_blks([x, t])
-
         if (identity_embedding and facial_prior) is not None:
             # main training
             idc = self.idc_conv(identity_embedding)
@@ -145,5 +144,5 @@ class Denoiser(nn.Module):
 
         x = self.ending(x)
         x = x[..., :height, :width]
-
+        
         return x

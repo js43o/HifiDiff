@@ -5,6 +5,7 @@ from torch.nn import functional as F
 from torchvision.utils import save_image
 from diffusers import AutoencoderKL, DDIMScheduler, DDIMPipeline
 from diffusers.optimization import get_cosine_schedule_with_warmup
+from accelerate import Accelerator, DistributedDataParallelKwargs
 from tqdm.auto import tqdm
 import argparse
 
@@ -49,9 +50,7 @@ args = parser.parse_args()
 
 
 num_epoch = args.num_epoch
-device = "cuda"
 
-os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 os.makedirs("./checkpoints/denoiser/%s" % args.name, exist_ok=True)
 os.makedirs("./output/denoiser/%s" % args.name, exist_ok=True)
 
@@ -68,6 +67,7 @@ def make_grid(images, rows, cols):
 def ddim_sample(
     model,
     vae,
+    scheduler,
     epoch,
     num_inference_steps=50,
 ):
@@ -76,20 +76,15 @@ def ddim_sample(
 
     # 초기 latent: 표준 정규분포에서 샘플링
     latents = torch.randn(
-        (args.sample_size, latent_channels, latent_res, latent_res), device=device
+        (args.sample_size, latent_channels, latent_res, latent_res)
     )
 
     # DDIM 스케줄러 설정
-    scheduler = DDIMScheduler(
-        num_train_timesteps=1000,
-        beta_schedule="scaled_linear",
-        prediction_type="epsilon",
-    )
-    scheduler.set_timesteps(num_inference_steps, device=device)
+    scheduler.set_timesteps(num_inference_steps)
 
     for t in scheduler.timesteps:
         # 모델의 노이즈 예측
-        t_batch = torch.full((args.sample_size,), t, device=device)
+        t_batch = torch.full((args.sample_size,), t)
         noise_pred = model(latents, t_batch)
 
         # DDIM step
@@ -106,7 +101,7 @@ def ddim_sample(
     )
 
 
-def train_loop(model, noise_scheduler, vae, optimizer, train_dataloader, lr_scheduler):
+def train_loop(model, noise_scheduler, vae, optimizer, train_dataloader, lr_scheduler, accelerator):
     global_step = 0
 
     for epoch in range(num_epoch):
@@ -114,45 +109,45 @@ def train_loop(model, noise_scheduler, vae, optimizer, train_dataloader, lr_sche
         progress_bar.set_description(f"Epoch {epoch}")
 
         for step, batch in enumerate(train_dataloader):
-            clean_images = batch.to(device)
+            clean_images = batch
             clean_latents = (
                 vae.encode(clean_images).latent_dist.sample() * 0.18215
-            ).to(device)
+            )
 
-            noise = torch.randn(clean_latents.shape, device=clean_latents.device)
+            noise = torch.randn(clean_latents.shape).to(accelerator.device)
             bs = clean_latents.shape[0]
             timesteps = torch.randint(
                 0,
                 noise_scheduler.config.num_train_timesteps,
                 (bs,),
-                device=clean_latents.device,
                 dtype=torch.int64,
-            )
+            ).to(accelerator.device)
 
             # 각 타임스텝의 노이즈 크기에 따라 깨끗한 이미지에 노이즈를 추가합니다. (forward diffusion)
             noisy_latents = noise_scheduler.add_noise(clean_latents, noise, timesteps)
 
-            # 노이즈를 반복적으로 예측합니다.
-            noise_pred = model(noisy_latents, timesteps)
-            loss = F.mse_loss(noise_pred, noise)
-            loss.backward()
+            with accelerator.accumulate(model):
+                # 노이즈를 반복적으로 예측합니다.
+                noise_pred = model(noisy_latents, timesteps)
+                loss = F.mse_loss(noise_pred, noise)
+                accelerator.backward(loss)
 
-            optimizer.step()
-            lr_scheduler.step()
-            optimizer.zero_grad()
+                optimizer.step()
+                lr_scheduler.step()
+                optimizer.zero_grad()
 
-            progress_bar.update(1)
-            logs = {
-                "loss": loss.detach().item(),
-                "lr": lr_scheduler.get_last_lr()[0],
-                "step": global_step,
-            }
-            progress_bar.set_postfix(**logs)
-            global_step += 1
+                progress_bar.update(1)
+                logs = {
+                    "loss": loss.detach().item(),
+                    "lr": lr_scheduler.get_last_lr()[0],
+                    "step": global_step,
+                }
+                progress_bar.set_postfix(**logs)
+                global_step += 1
 
         # 각 에포크가 끝난 후 evaluate()와 몇 가지 데모 이미지를 선택적으로 샘플링하고 모델을 저장합니다.
         if (epoch + 1) % args.save_image_epoch == 0 or epoch + 1 == num_epoch:
-            ddim_sample(model, vae, epoch + 1)
+            ddim_sample(model, vae, noise_scheduler, epoch + 1)
 
         if (epoch + 1) % args.save_model_epoch == 0 or epoch + 1 == num_epoch:
             torch.save(
@@ -177,10 +172,11 @@ train_dataset = torch.utils.data.ConcatDataset(
 train_dataloader = torch.utils.data.DataLoader(
     train_dataset, batch_size=args.batch_size, shuffle=True
 )
-model = Denoiser(latent_res=args.image_res // 8).to(device)
+
+model = Denoiser(latent_res=args.image_res // 8)
 vae = AutoencoderKL.from_pretrained(
     "stabilityai/stable-diffusion-2-1", subfolder="vae"
-).to(device)
+)
 noise_scheduler = DDIMScheduler(
     num_train_timesteps=1000, beta_schedule="scaled_linear", prediction_type="epsilon"
 )
@@ -191,4 +187,11 @@ lr_scheduler = get_cosine_schedule_with_warmup(
     num_training_steps=(len(train_dataloader) * num_epoch),
 )
 
-train_loop(model, noise_scheduler, vae, optimizer, train_dataloader, lr_scheduler)
+ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+accelerator = Accelerator(kwargs_handlers=[ddp_kwargs])
+train_dataloader, model, optimizer, lr_scheduler = accelerator.prepare(
+    train_dataloader, model, optimizer, lr_scheduler
+)
+vae = vae.to(accelerator.device)
+
+train_loop(model, noise_scheduler, vae, optimizer, train_dataloader, lr_scheduler, accelerator)
