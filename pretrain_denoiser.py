@@ -2,25 +2,58 @@ import os
 import torch
 from PIL import Image
 from torch.nn import functional as F
+from torchvision.utils import save_image
 from diffusers import AutoencoderKL, DDIMScheduler, DDIMPipeline
 from diffusers.optimization import get_cosine_schedule_with_warmup
 from tqdm.auto import tqdm
-from torchvision.utils import save_image
+import argparse
 
 from models.denoiser.model import Denoiser
-from dataset import KfaceDataset_HROnly, CelebADataset
-
-# os.environ["CUDA_VISIBLE_DEVICES"] = "5"
+from dataset import KfaceHRDataset, CelebAHQDataset
 
 
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--name",
+    type=str,
+    default="0",
+    help="A number for checkpoints and output path names",
+)
+parser.add_argument("--gpu", type=str, default="0", help="Which GPU to use")
+parser.add_argument("--num_epoch", type=int, default=100, help="A number of epoch")
+parser.add_argument(
+    "--batch_size", type=int, default=8, help="A batch size of training dataset"
+)
+parser.add_argument(
+    "--sample_size", type=int, default=8, help="The number of sampling images"
+)
+parser.add_argument(
+    "--image_res",
+    type=int,
+    default=128,
+    help="Width and height of images used for pre-training",
+)
+parser.add_argument(
+    "--save_model_epoch",
+    type=int,
+    default=10,
+    help="A number of epoch to save current model",
+)
+parser.add_argument(
+    "--save_image_epoch",
+    type=int,
+    default=1,
+    help="A number of epoch to save sample images",
+)
+args = parser.parse_args()
+
+
+num_epoch = args.num_epoch
 device = "cuda"
-save_model_epochs = 10
-save_image_epochs = 1
-num_epochs = 50
 
-TRY_NUM = 2
-os.makedirs("./checkpoints/denoiser/%d" % TRY_NUM, exist_ok=True)
-os.makedirs("./output/denoiser/%d" % TRY_NUM, exist_ok=True)
+os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
+os.makedirs("./checkpoints/denoiser/%s" % args.name, exist_ok=True)
+os.makedirs("./output/denoiser/%s" % args.name, exist_ok=True)
 
 
 def make_grid(images, rows, cols):
@@ -33,21 +66,17 @@ def make_grid(images, rows, cols):
 
 @torch.no_grad()
 def ddim_sample(
-    model,  # 훈련된 커스텀 모델
-    vae,  # VAE 디코더
+    model,
+    vae,
     epoch,
-    num_images=8,  # 배치 크기
     num_inference_steps=50,
-    save_dir="output/denoiser/%d" % TRY_NUM,
 ):
-    # latent 크기
-    latent_height = 16
-    latent_width = 16
-    latent_channels = 4  # 일반적으로 LDM latent는 4채널
+    latent_res = args.image_res // 8
+    latent_channels = 4
 
     # 초기 latent: 표준 정규분포에서 샘플링
     latents = torch.randn(
-        (num_images, latent_channels, latent_height, latent_width), device=device
+        (args.sample_size, latent_channels, latent_res, latent_res), device=device
     )
 
     # DDIM 스케줄러 설정
@@ -60,7 +89,7 @@ def ddim_sample(
 
     for t in scheduler.timesteps:
         # 모델의 노이즈 예측
-        t_batch = torch.full((num_images,), t, device=device)
+        t_batch = torch.full((args.sample_size,), t, device=device)
         noise_pred = model(latents, t_batch)
 
         # DDIM step
@@ -70,17 +99,17 @@ def ddim_sample(
     images = vae.decode(latents / 0.18215).sample  # LDM scale factor 보정
     save_image(
         images,
-        os.path.join(save_dir, "%d.png" % epoch),
+        os.path.join("output/denoiser/%s" % args.name, "%d.png" % epoch),
         nrow=2,
         normalize=True,
-        value_range=(-1, 1),
+        value_range=(0, 1),
     )
 
 
 def train_loop(model, noise_scheduler, vae, optimizer, train_dataloader, lr_scheduler):
     global_step = 0
 
-    for epoch in range(num_epochs):
+    for epoch in range(num_epoch):
         progress_bar = tqdm(total=len(train_dataloader))
         progress_bar.set_description(f"Epoch {epoch}")
 
@@ -88,14 +117,10 @@ def train_loop(model, noise_scheduler, vae, optimizer, train_dataloader, lr_sche
             clean_images = batch.to(device)
             clean_latents = (
                 vae.encode(clean_images).latent_dist.sample() * 0.18215
-            ).to(
-                device
-            )  # [B, 4, 16, 16]
-            # 이미지에 더할 노이즈를 샘플링합니다.
+            ).to(device)
+
             noise = torch.randn(clean_latents.shape, device=clean_latents.device)
             bs = clean_latents.shape[0]
-
-            # 각 이미지를 위한 랜덤한 타임스텝(timestep)을 샘플링합니다.
             timesteps = torch.randint(
                 0,
                 noise_scheduler.config.num_train_timesteps,
@@ -126,29 +151,33 @@ def train_loop(model, noise_scheduler, vae, optimizer, train_dataloader, lr_sche
             global_step += 1
 
         # 각 에포크가 끝난 후 evaluate()와 몇 가지 데모 이미지를 선택적으로 샘플링하고 모델을 저장합니다.
-        if (epoch + 1) % save_image_epochs == 0 or epoch + 1 == num_epochs:
+        if (epoch + 1) % args.save_image_epoch == 0 or epoch + 1 == num_epoch:
             ddim_sample(model, vae, epoch + 1)
 
-        if (epoch + 1) % save_model_epochs == 0 or epoch + 1 == num_epochs:
+        if (epoch + 1) % args.save_model_epoch == 0 or epoch + 1 == num_epoch:
             torch.save(
                 {
                     "epoch": epoch + 1,
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
                 },
-                "./checkpoints/denoiser/%d/%d.pt" % (TRY_NUM, epoch + 1),
+                "./checkpoints/denoiser/%s/%d.pt" % (args.name, epoch + 1),
             )
 
 
-train_dataset_kface = KfaceDataset_HROnly(dataroot="../../datasets/kface", use="train")
-train_dataset_celeba = CelebADataset(dataroot="../../datasets/celeba_aligned")
+train_dataset_kface = KfaceHRDataset(
+    dataroot="../../datasets/kface", res=args.image_res
+)
+train_dataset_celeba = CelebAHQDataset(
+    dataroot="../../datasets/celeba_hq_256", res=args.image_res
+)
 train_dataset = torch.utils.data.ConcatDataset(
     [train_dataset_kface, train_dataset_celeba]
 )
 train_dataloader = torch.utils.data.DataLoader(
-    train_dataset, batch_size=8, shuffle=True
+    train_dataset, batch_size=args.batch_size, shuffle=True
 )
-model = Denoiser().to(device)
+model = Denoiser(latent_res=args.image_res // 8).to(device)
 vae = AutoencoderKL.from_pretrained(
     "stabilityai/stable-diffusion-2-1", subfolder="vae"
 ).to(device)
@@ -159,7 +188,7 @@ optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
 lr_scheduler = get_cosine_schedule_with_warmup(
     optimizer=optimizer,
     num_warmup_steps=500,
-    num_training_steps=(len(train_dataloader) * num_epochs),
+    num_training_steps=(len(train_dataloader) * num_epoch),
 )
 
 train_loop(model, noise_scheduler, vae, optimizer, train_dataloader, lr_scheduler)

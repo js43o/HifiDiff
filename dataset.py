@@ -15,7 +15,7 @@ EXPRESSION_CONDITION = ["E01", "E02", "E03"]
 def get_masked_patches(y, y_meta: List[str]):
     patches = []
     y_width, y_height = y.size
-    y = y.resize((128, 128), resample=Image.Resampling.LANCZOS)
+    y = y.resize((128, 128), Image.Resampling.BICUBIC)
     y = np.array(y)
 
     head_left, head_top, _, _ = map(int, y_meta[7].split("\t"))
@@ -27,7 +27,7 @@ def get_masked_patches(y, y_meta: List[str]):
             left - head_left : left + width - head_left,
         ] = 1
         mask = Image.fromarray(mask)
-        mask = mask.resize((128, 128), resample=Image.Resampling.NEAREST)
+        mask = mask.resize((128, 128), Image.Resampling.NEAREST)
         mask = np.array(mask)[..., np.newaxis]
 
         patch = y * mask
@@ -86,13 +86,15 @@ class KfaceDataset(Dataset):
 
         left, top, width, height = map(int, input_meta[7].split("\t"))
         input_img = input_img.crop((left, top, left + width, top + height))
-        input_img = input_img.resize((32, 32))  # make it low-resolution
-        input_img = input_img.resize((128, 128))
+        input_img = input_img.resize(
+            (32, 32), Image.Resampling.BICUBIC
+        )  # make it low-resolution
+        input_img = input_img.resize((128, 128), Image.Resampling.BICUBIC)
 
         left, top, width, height = map(int, gt_meta[7].split("\t"))
         gt_img = gt_img.crop((left, top, left + width, top + height))
         gt_patches = get_masked_patches(gt_img, gt_meta)
-        gt_img = gt_img.resize((128, 128))
+        gt_img = gt_img.resize((128, 128), Image.Resampling.BICUBIC)
 
         return F.to_tensor(input_img), F.to_tensor(gt_img), torch.stack(gt_patches)
 
@@ -100,54 +102,7 @@ class KfaceDataset(Dataset):
         return len(self.input_imgs)
 
 
-class KfaceDataset_HROnly(Dataset):
-    def __init__(self, dataroot: str, use="train"):
-        super().__init__()
-        self.dataroot = os.path.join(dataroot, use)
-        self.ids = os.listdir(self.dataroot)
-
-        self.imgs = []
-        self.metas = []
-
-        for id in self.ids:
-            for light in LIGHT_CONDITION:
-                for expression in EXPRESSION_CONDITION:
-                    for angle in range(1, 21):
-                        img = os.path.join(
-                            self.dataroot,
-                            id,
-                            "S001",
-                            light,
-                            expression,
-                            "C%s.jpg" % angle,
-                        )
-                        meta = os.path.join(
-                            self.dataroot,
-                            id,
-                            "S001",
-                            light,
-                            expression,
-                            "C%s.txt" % angle,
-                        )
-                        self.imgs.append(img)
-                        self.metas.append(meta)
-
-    def __getitem__(self, index):
-        # print("processing image # %d (total %d)" %(index, len(self.ids) * len(LIGHT_CONDITION) * len(EXPRESSION_CONDITION) * 19))
-        img = Image.open(self.imgs[index]).convert("RGB")
-        meta = open(self.metas[index], "r").readlines()
-
-        left, top, width, height = map(int, meta[7].split("\t"))
-        img = img.crop((left, top, left + width, top + height))
-        img = img.resize((128, 128))
-
-        return F.to_tensor(img)
-
-    def __len__(self):
-        return len(self.imgs)
-
-
-class KfaceDataset_IDC(Dataset):
+class KfaceDataset_IDC(Dataset):  # for pre-train the IDC module
     def __init__(self, dataroot: str, use="train"):
         super().__init__()
         self.dataroot = os.path.join(dataroot, use)
@@ -212,7 +167,6 @@ class KfaceDataset_IDC(Dataset):
                         self.other_metas.append(meta)
 
     def __getitem__(self, index):
-        # print("processing image # %d (total %d)" %(index, len(self.ids) * len(LIGHT_CONDITION) * len(EXPRESSION_CONDITION) * 19))
         input_img = Image.open(self.input_imgs[index]).convert("RGB")
         input_meta = open(self.input_metas[index], "r").readlines()
         gt_img = Image.open(self.gt_imgs[index]).convert("RGB")
@@ -222,16 +176,18 @@ class KfaceDataset_IDC(Dataset):
 
         left, top, width, height = map(int, input_meta[7].split("\t"))
         input_img = input_img.crop((left, top, left + width, top + height))
-        input_img = input_img.resize((32, 32))  # make it low-resolution
-        input_img = input_img.resize((128, 128))
+        input_img = input_img.resize(
+            (32, 32), Image.Resampling.BICUBIC
+        )  # make it low-resolution
+        input_img = input_img.resize((128, 128), Image.Resampling.BICUBIC)
 
         left, top, width, height = map(int, gt_meta[7].split("\t"))
         gt_img = gt_img.crop((left, top, left + width, top + height))
-        gt_img = gt_img.resize((128, 128))
+        gt_img = gt_img.resize((128, 128), Image.Resampling.BICUBIC)
 
         left, top, width, height = map(int, other_meta[7].split("\t"))
         other_img = other_img.crop((left, top, left + width, top + height))
-        other_img = other_img.resize((128, 128))
+        other_img = other_img.resize((128, 128), Image.Resampling.BICUBIC)
 
         return F.to_tensor(input_img), F.to_tensor(gt_img), F.to_tensor(other_img)
 
@@ -239,19 +195,66 @@ class KfaceDataset_IDC(Dataset):
         return len(self.input_imgs)
 
 
-class CelebADataset(Dataset):
-    def __init__(self, dataroot: str):
+class KfaceHRDataset(Dataset):  # for pre-train the denoiser
+    def __init__(self, dataroot: str, res=128):
+        super().__init__()
+        self.dataroot = os.path.join(dataroot, "train")
+        self.ids = os.listdir(self.dataroot)
+        self.res = res
+
+        self.imgs = []
+        self.metas = []
+
+        for id in self.ids:
+            for light in LIGHT_CONDITION:
+                for expression in EXPRESSION_CONDITION:
+                    for angle in range(1, 21):
+                        img = os.path.join(
+                            self.dataroot,
+                            id,
+                            "S001",
+                            light,
+                            expression,
+                            "C%s.jpg" % angle,
+                        )
+                        meta = os.path.join(
+                            self.dataroot,
+                            id,
+                            "S001",
+                            light,
+                            expression,
+                            "C%s.txt" % angle,
+                        )
+                        self.imgs.append(img)
+                        self.metas.append(meta)
+
+    def __getitem__(self, index):
+        img = Image.open(self.imgs[index]).convert("RGB")
+        meta = open(self.metas[index], "r").readlines()
+
+        left, top, width, height = map(int, meta[7].split("\t"))
+        img = img.crop((left, top, left + width, top + height))
+        img = img.resize((self.res, self.res), Image.Resampling.BICUBIC)
+
+        return F.to_tensor(img)
+
+    def __len__(self):
+        return len(self.imgs)
+
+
+class CelebAHQDataset(Dataset):  # for pre-train the denoiser
+    def __init__(self, dataroot: str, res=128):
         super().__init__()
         self.dataroot = os.path.join(dataroot)
         self.imgs = []
+        self.res = res
 
         for filename in os.listdir(self.dataroot):
             self.imgs.append(os.path.join(self.dataroot, filename))
 
     def __getitem__(self, index):
         img = Image.open(self.imgs[index]).convert("RGB")
-        img = img.crop((0, 20, 178, 198))
-        img = img.resize((128, 128))
+        img = img.resize((self.res, self.res), Image.Resampling.BICUBIC)
 
         return F.to_tensor(img)
 
