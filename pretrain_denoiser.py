@@ -77,14 +77,14 @@ def ddim_sample(
     # 초기 latent: 표준 정규분포에서 샘플링
     latents = torch.randn(
         (args.sample_size, latent_channels, latent_res, latent_res)
-    )
+    ).to(accelerator.device)
 
     # DDIM 스케줄러 설정
     scheduler.set_timesteps(num_inference_steps)
 
     for t in scheduler.timesteps:
         # 모델의 노이즈 예측
-        t_batch = torch.full((args.sample_size,), t)
+        t_batch = torch.full((args.sample_size,), t).to(accelerator.device)
         noise_pred = model(latents, t_batch)
 
         # DDIM step
@@ -144,7 +144,7 @@ def train_loop(model, noise_scheduler, vae, optimizer, train_dataloader, lr_sche
                 }
                 progress_bar.set_postfix(**logs)
                 global_step += 1
-
+                
         # 각 에포크가 끝난 후 evaluate()와 몇 가지 데모 이미지를 선택적으로 샘플링하고 모델을 저장합니다.
         if (epoch + 1) % args.save_image_epoch == 0 or epoch + 1 == num_epoch:
             ddim_sample(model, vae, noise_scheduler, epoch + 1)
