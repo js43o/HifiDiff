@@ -138,8 +138,9 @@ class Denoiser(nn.Module):
                 x = hca(facial_prior, x)
         else:
             # pre-training
-            for decoder, up in zip(self.decoders, self.ups):
+            for decoder, up, enc_skip in zip(self.decoders, self.ups, enc_skips[::-1]):
                 x = up(x)
+                x = x + enc_skip
                 x, _ = decoder([x, t])
 
         x = self.ending(x)
