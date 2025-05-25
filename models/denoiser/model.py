@@ -119,7 +119,7 @@ class Denoiser(nn.Module):
             x = down(x)
 
         x, _ = self.middle_blks([x, t])
-        if (identity_embedding and facial_prior) is not None:
+        if (identity_embedding and facial_priors) is not None:
             # main training
             idc = self.idc_conv(identity_embedding)
             x = x + idc.reshape(batch, *x.shape[1:])
