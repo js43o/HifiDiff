@@ -6,8 +6,10 @@ from diffusers import AutoencoderKL, DDIMScheduler
 from diffusers.optimization import get_cosine_schedule_with_warmup
 from accelerate import Accelerator, DistributedDataParallelKwargs
 from tqdm.auto import tqdm
+from collections import OrderedDict
 import argparse
 import sys
+import gc
 
 from models.denoiser.model import Denoiser
 from dataset import KfaceHRDataset, CelebAHQDataset
@@ -165,6 +167,7 @@ def train_loop(model, noise_scheduler, vae, optimizer, train_dataloader, lr_sche
                 "./checkpoints/denoiser/%s/%d.pt" % (args.name, epoch),
             )
         
+        gc.collect()
         torch.cuda.empty_cache()
 
 
@@ -198,8 +201,19 @@ start_epoch = 0
 
 if args.ckpt is not None:
     checkpoint = torch.load(args.ckpt)
-    model.load_state_dict(checkpoint["model_state_dict"])
-    optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    model_state_dict = checkpoint["model_state_dict"]
+    optimizer_state_dict = checkpoint["optimizer_state_dict"]
+    
+    if list(model_state_dict.keys())[0].startswith("module"):
+        new_state_dict = OrderedDict()
+        for k, v in model_state_dict.items():
+            name = k[7:]  # remove `module.`
+            new_state_dict[name] = v
+        
+        model_state_dict = new_state_dict
+        
+    model.load_state_dict(model_state_dict)
+    optimizer.load_state_dict(optimizer_state_dict)
     start_epoch = int(checkpoint["epoch"])
     
 
