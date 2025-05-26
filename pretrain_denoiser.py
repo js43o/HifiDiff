@@ -1,13 +1,13 @@
 import os
 import torch
-from PIL import Image
 from torch.nn import functional as F
 from torchvision.utils import save_image
-from diffusers import AutoencoderKL, DDIMScheduler, DDIMPipeline
+from diffusers import AutoencoderKL, DDIMScheduler
 from diffusers.optimization import get_cosine_schedule_with_warmup
 from accelerate import Accelerator, DistributedDataParallelKwargs
 from tqdm.auto import tqdm
 import argparse
+import sys
 
 from models.denoiser.model import Denoiser
 from dataset import KfaceHRDataset, CelebAHQDataset
@@ -35,9 +35,15 @@ parser.add_argument(
     help="Width and height of images used for pre-training",
 )
 parser.add_argument(
+    "--ckpt",
+    type=str,
+    required=False,
+    help="A path of checkpoint (.pt) to continue training",
+)
+parser.add_argument(
     "--save_model_epoch",
     type=int,
-    default=10,
+    default=5,
     help="A number of epoch to save current model",
 )
 parser.add_argument(
@@ -49,19 +55,9 @@ parser.add_argument(
 args = parser.parse_args()
 
 
-num_epoch = args.num_epoch
-
 os.makedirs("./checkpoints/denoiser/%s" % args.name, exist_ok=True)
 os.makedirs("./output/denoiser/%s" % args.name, exist_ok=True)
-
-
-def make_grid(images, rows, cols):
-    w, h = images[0].size
-    grid = Image.new("RGB", size=(cols * w, rows * h))
-    for i, image in enumerate(images):
-        grid.paste(image, box=(i % cols * w, i // cols * h))
-    return grid
-
+torch.manual_seed(0)
 
 @torch.no_grad()
 def ddim_sample(
@@ -73,6 +69,8 @@ def ddim_sample(
 ):
     latent_res = args.image_res // 8
     latent_channels = 4
+    
+    model.eval()
 
     # 초기 latent: 표준 정규분포에서 샘플링
     latents = torch.randn(
@@ -101,12 +99,15 @@ def ddim_sample(
     )
 
 
-def train_loop(model, noise_scheduler, vae, optimizer, train_dataloader, lr_scheduler, accelerator):
+def train_loop(model, noise_scheduler, vae, optimizer, train_dataloader, lr_scheduler, accelerator, start_epoch=0):
     global_step = 0
 
-    for epoch in range(num_epoch):
-        progress_bar = tqdm(total=len(train_dataloader))
+    for epoch in range(start_epoch, args.num_epoch):
+        progress_bar = tqdm(total=len(train_dataloader), disable=not accelerator.is_local_main_process)
         progress_bar.set_description(f"Epoch {epoch}")
+        
+        acc_loss = 0
+        model.train()
 
         for step, batch in enumerate(train_dataloader):
             clean_images = batch
@@ -126,38 +127,45 @@ def train_loop(model, noise_scheduler, vae, optimizer, train_dataloader, lr_sche
             # 각 타임스텝의 노이즈 크기에 따라 깨끗한 이미지에 노이즈를 추가합니다. (forward diffusion)
             noisy_latents = noise_scheduler.add_noise(clean_latents, noise, timesteps)
 
-            with accelerator.accumulate(model):
-                # 노이즈를 반복적으로 예측합니다.
-                noise_pred = model(noisy_latents, timesteps)
-                loss = F.mse_loss(noise_pred, noise)
-                accelerator.backward(loss)
+            # 노이즈를 반복적으로 예측합니다.
+            noise_pred = model(noisy_latents, timesteps)
+            loss = F.mse_loss(noise_pred, noise)
+            accelerator.backward(loss)
 
-                optimizer.step()
-                lr_scheduler.step()
-                optimizer.zero_grad()
+            optimizer.step()
+            lr_scheduler.step()
+            optimizer.zero_grad()
 
-                progress_bar.update(1)
-                logs = {
-                    "loss": loss.detach().item(),
-                    "lr": lr_scheduler.get_last_lr()[0],
-                    "step": global_step,
-                }
-                progress_bar.set_postfix(**logs)
-                global_step += 1
+            progress_bar.update(1)
+            logs = {
+                "loss": loss.detach().item(),
+                "lr": lr_scheduler.get_last_lr()[0],
+                "step": global_step,
+            }
+            progress_bar.set_postfix(**logs)
+            global_step += 1
+            
+            if accelerator.is_local_main_process:
+                acc_loss += loss.detach().item()
                 
         # 각 에포크가 끝난 후 evaluate()와 몇 가지 데모 이미지를 선택적으로 샘플링하고 모델을 저장합니다.
-        if (epoch + 1) % args.save_image_epoch == 0 or epoch + 1 == num_epoch:
-            ddim_sample(model, vae, noise_scheduler, epoch + 1)
+        if accelerator.is_local_main_process:
+            print("✅ average loss = %.6f" % (acc_loss / len(train_dataloader)), file=sys.stderr)
+        
+        if epoch % args.save_image_epoch == 0 or epoch == args.num_epoch:
+            ddim_sample(model, vae, noise_scheduler, epoch)
 
-        if (epoch + 1) % args.save_model_epoch == 0 or epoch + 1 == num_epoch:
+        if epoch % args.save_model_epoch == 0 or epoch == args.num_epoch:
             torch.save(
                 {
-                    "epoch": epoch + 1,
+                    "epoch": epoch,
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
                 },
-                "./checkpoints/denoiser/%s/%d.pt" % (args.name, epoch + 1),
+                "./checkpoints/denoiser/%s/%d.pt" % (args.name, epoch),
             )
+        
+        torch.cuda.empty_cache()
 
 
 train_dataset_kface = KfaceHRDataset(
@@ -184,14 +192,21 @@ optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
 lr_scheduler = get_cosine_schedule_with_warmup(
     optimizer=optimizer,
     num_warmup_steps=500,
-    num_training_steps=(len(train_dataloader) * num_epoch),
+    num_training_steps=(len(train_dataloader) * args.num_epoch),
 )
+start_epoch = 0
 
-ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
-accelerator = Accelerator(kwargs_handlers=[ddp_kwargs])
+if args.ckpt is not None:
+    checkpoint = torch.load(args.ckpt)
+    model.load_state_dict(checkpoint["model_state_dict"])
+    optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    start_epoch = int(checkpoint["epoch"])
+    
+
+accelerator = Accelerator()
 train_dataloader, model, optimizer, lr_scheduler = accelerator.prepare(
     train_dataloader, model, optimizer, lr_scheduler
 )
 vae = vae.to(accelerator.device)
 
-train_loop(model, noise_scheduler, vae, optimizer, train_dataloader, lr_scheduler, accelerator)
+train_loop(model, noise_scheduler, vae, optimizer, train_dataloader, lr_scheduler, accelerator, start_epoch)
