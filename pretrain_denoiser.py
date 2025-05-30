@@ -4,7 +4,7 @@ from torch.nn import functional as F
 from torchvision.utils import save_image
 from diffusers import AutoencoderKL, DDIMScheduler
 from diffusers.optimization import get_cosine_schedule_with_warmup
-from accelerate import Accelerator, DistributedDataParallelKwargs
+from accelerate import Accelerator
 from tqdm.auto import tqdm
 from collections import OrderedDict
 import argparse
@@ -122,8 +122,7 @@ def train_loop(model, noise_scheduler, vae, optimizer, train_dataloader, lr_sche
             timesteps = torch.randint(
                 0,
                 noise_scheduler.config.num_train_timesteps,
-                (bs,),
-                dtype=torch.int64,
+                (bs,)
             ).to(accelerator.device)
 
             # 각 타임스텝의 노이즈 크기에 따라 깨끗한 이미지에 노이즈를 추가합니다. (forward diffusion)
