@@ -4,13 +4,13 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader
 from torchvision.utils import save_image
 from diffusers import AutoencoderKL, DDIMScheduler
-from diffusers.optimization import get_cosine_schedule_with_warmup
 from accelerate import Accelerator
 from tqdm.auto import tqdm
 import argparse
 import sys
 import gc
 import pyiqa
+from collections import OrderedDict
 
 from dataset import KfaceDataset
 from models.refiner import FacialRefiner
@@ -23,9 +23,8 @@ parser.add_argument(
     default="0",
     help="A number for checkpoints and output path names",
 )
-parser.add_argument("--num_epoch", type=int, default=24, help="A number of epoch")
 parser.add_argument(
-    "--batch_size", type=int, default=4, help="A batch size of training dataset"
+    "--batch_size", type=int, default=2, help="A batch size of training dataset"
 )
 parser.add_argument(
     "--image_res",
@@ -41,37 +40,15 @@ parser.add_argument(
     help="A path of checkpoint (.pt) of the CR module",
 )
 parser.add_argument(
-    "--idc_ckpt",
+    "--refiner_ckpt",
     type=str,
-    required=False,
-    default="checkpoints/idc/24.pt",
-    help="A path of checkpoint (.pt) of the CR module",
-)
-parser.add_argument(
-    "--denoiser_ckpt",
-    type=str,
-    required=False,
-    default="checkpoints/denoiser/40.pt",
-    help="A path of checkpoint (.pt) of the denoiser",
-)
-parser.add_argument(
-    "--save_model_epoch",
-    type=int,
-    default=4,
-    help="A number of epoch to save current model",
-)
-parser.add_argument(
-    "--save_image_epoch",
-    type=int,
-    default=1,
-    help="A number of epoch to save sample images",
+    default="checkpoints/refiner/0/20.pt",
+    help="A path of checkpoint (.pt) of the refiner (denoiser and FPG module)",
 )
 args = parser.parse_args()
 
 
-os.makedirs("./checkpoints/refiner/%s" % args.name, exist_ok=True)
-os.makedirs("./output/refiner/%s" % args.name, exist_ok=True)
-torch.manual_seed(0)
+torch.manual_seed(1)
 
 
 @torch.no_grad()
@@ -110,91 +87,11 @@ def ddim_sample(
     return images
 
 
-def train_loop(
-    model,
-    vae,
-    cr_module,
-    noise_scheduler,
-    optimizer,
-    train_dataloader,
-    lr_scheduler,
-    epoch,
-    accelerator,
-):
-    progress_bar = tqdm(
-        total=len(train_dataloader), disable=not accelerator.is_local_main_process
-    )
-    progress_bar.set_description(f"Epoch {epoch}")
-
-    global_step = 0
-    acc_loss = 0
-    model.train()
-
-    for ln_face, hf_face, _ in train_dataloader:
-        hf_face_upscaled = F.interpolate(hf_face, 512, mode="bicubic")
-        hf_latent = vae.encode(hf_face_upscaled).latent_dist.sample() * 0.18215
-
-        noise = torch.randn(hf_latent.shape).to(accelerator.device)
-        bs = hf_latent.shape[0]
-        timesteps = torch.randint(
-            0, noise_scheduler.config.num_train_timesteps, (bs,)
-        ).to(accelerator.device)
-
-        noisy_latent = noise_scheduler.add_noise(hf_latent, noise, timesteps)
-
-        cr_face = cr_module(ln_face)
-        cr_face_upscaled = F.interpolate(cr_face, 512, mode="bicubic")
-        cr_latent = vae.encode(cr_face_upscaled).latent_dist.sample() * 0.18215
-
-        noise_pred = model(noisy_latent, timesteps, cr_face, cr_latent)
-        loss = F.mse_loss(noise_pred, noise)
-        accelerator.backward(loss)
-
-        optimizer.step()
-        lr_scheduler.step()
-        optimizer.zero_grad()
-
-        progress_bar.update(1)
-        logs = {
-            "loss": loss.detach().item(),
-            "lr": lr_scheduler.get_last_lr()[0],
-            "step": global_step,
-        }
-        progress_bar.set_postfix(**logs)
-        global_step += 1
-
-        if accelerator.is_local_main_process:
-            acc_loss += loss.detach().item()
-
-    if accelerator.is_local_main_process:
-        print(
-            "🔄 Training loss = %.4f" % (acc_loss / len(train_dataloader)),
-            file=sys.stderr,
-        )
-
-    if epoch % args.save_model_epoch == 0 or epoch == args.num_epoch - 1:
-        torch.save(
-            {
-                "epoch": epoch,
-                "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-            },
-            "./checkpoints/refiner/%s/%d.pt" % (args.name, epoch),
-        )
-
-    gc.collect()
-    torch.cuda.empty_cache()
-
-
-def val_loop(
-    model, vae, cr_module, noise_scheduler, val_dataloader, epoch, accelerator
-):
+def val_loop(model, vae, cr_module, noise_scheduler, val_dataloader, accelerator):
     progress_bar = tqdm(
         total=len(val_dataloader), disable=not accelerator.is_local_main_process
     )
-    progress_bar.set_description(f"Epoch {epoch}")
     global_step = 0
-
     acc_loss = 0
     sample_faces = (None, None)
     model.eval()
@@ -231,6 +128,8 @@ def val_loop(
             if idx == 0:
                 sample_faces = (ln_face, hf_face)
 
+        break
+
     if accelerator.is_local_main_process:
         print(
             "✅ Validation loss = %.4f" % (acc_loss / len(val_dataloader)),
@@ -253,7 +152,7 @@ def val_loop(
 
         save_image(
             torch.concat([sample_ln, result, sample_hf]),
-            os.path.join("output/refiner/%s" % args.name, "%d.png" % epoch),
+            os.path.join("output/refiner/%s" % args.name, "validation.png"),
             nrow=2,
             normalize=True,
             value_range=(0, 1),
@@ -263,37 +162,28 @@ def val_loop(
     torch.cuda.empty_cache()
 
 
-train_dataset = KfaceDataset(
+val_dataset = KfaceDataset(
     dataroot="../../datasets/kface",
-    use="train",
+    use="val",
 )
-# val_dataset = KfaceDataset(
-#     dataroot="../../datasets/kface",
-#     use="val",
-# )
+val_dataloader = DataLoader(dataset=val_dataset, batch_size=args.batch_size)
 
-train_dataloader = DataLoader(
-    dataset=train_dataset, batch_size=args.batch_size, shuffle=True
-)
-# val_dataloader = DataLoader(dataset=val_dataset, batch_size=args.batch_size)
+model = FacialRefiner()
+refiner_weights = torch.load(args.refiner_ckpt)["model_state_dict"]
+temp_weights = OrderedDict()
+for k, v in refiner_weights.items():
+    name = k[7:]  # remove `module.`
+    temp_weights[name] = v
 
-model = FacialRefiner(args.idc_ckpt, args.denoiser_ckpt)
+refiner_weights = temp_weights
+model.load_state_dict(refiner_weights)
 
 noise_scheduler = DDIMScheduler(
     num_train_timesteps=1000, beta_schedule="scaled_linear", prediction_type="epsilon"
 )
-optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
-lr_scheduler = get_cosine_schedule_with_warmup(
-    optimizer=optimizer,
-    num_warmup_steps=500,
-    num_training_steps=(len(train_dataloader) * args.num_epoch),
-)
 
 accelerator = Accelerator()
-train_dataloader, model, optimizer, lr_scheduler = accelerator.prepare(
-    train_dataloader, model, optimizer, lr_scheduler
-)
-# val_dataloader = accelerator.prepare(val_dataloader)
+val_dataloader, model = accelerator.prepare(val_dataloader, model)
 
 vae = AutoencoderKL.from_pretrained(
     "stabilityai/stable-diffusion-2-1", subfolder="vae"
@@ -302,16 +192,4 @@ cr_module = CoarseRestoration().to(accelerator.device)
 cr_module.load_state_dict(torch.load(args.cr_ckpt)["model_state_dict"])
 cr_module.eval()
 
-for epoch in range(args.num_epoch):
-    train_loop(
-        model,
-        vae,
-        cr_module,
-        noise_scheduler,
-        optimizer,
-        train_dataloader,
-        lr_scheduler,
-        epoch,
-        accelerator,
-    )
-    # val_loop(model, vae, cr_module, noise_scheduler, val_dataloader, epoch, accelerator)
+val_loop(model, vae, cr_module, noise_scheduler, val_dataloader, accelerator)

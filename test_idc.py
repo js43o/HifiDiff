@@ -24,9 +24,10 @@ def test_loop(dataloader, cr_module, model):
                 cosine_similarity(id_cr, id_hf).mean().item(),
                 cosine_similarity(id_cr, id_ck).mean().item(),
             )
-            print("CR-HF vs. CR-CK:", round(sim_hf, 4), round(sim_ck, 4))
+            is_correct = sim_hf > sim_ck 
+            print("CR-HF vs. CR-CK:", round(sim_hf, 4), round(sim_ck, 4), "✅" if is_correct else "❌")
 
-            accuracy += 1 if sim_hf > sim_ck else 0
+            accuracy += 1 if is_correct else 0
 
     accuracy /= len(dataloader)
 
@@ -48,8 +49,8 @@ cr_module.load_state_dict(cr_checkpoint["model_state_dict"])
 cr_module.eval()
 
 model = ResNet50().to(device=device)
-checkpoint = torch.load("./checkpoints/idc/24.pt")
-model.load_state_dict(checkpoint["model_state_dict"])
+# checkpoint = torch.load("./checkpoints/idc/10.pt")
+# model.load_state_dict(checkpoint["model_state_dict"])
 model.eval()
 
 test_loop(dataloader=test_dataloader, cr_module=cr_module, model=model)
