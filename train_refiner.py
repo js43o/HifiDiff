@@ -72,40 +72,6 @@ os.makedirs("./output/refiner/%s" % args.name, exist_ok=True)
 torch.manual_seed(0)
 
 
-@torch.no_grad()
-def ddim_sample(
-    ln_face,
-    model,
-    vae,
-    scheduler,
-    num_inference_steps=50,
-):
-    latent_res = args.image_res // 8
-    latent_channels = 4
-    bs = ln_face.shape[0]
-
-    model.eval()
-
-    latent = torch.randn((bs, latent_channels, latent_res, latent_res)).to(
-        accelerator.device
-    )
-
-    cr_face = cr_module(ln_face)
-    cr_latent = vae.encode(cr_face).latent_dist.sample() * 0.18215
-
-    scheduler.set_timesteps(num_inference_steps)
-
-    for t in scheduler.timesteps:
-        t_batch = torch.full((bs,), t).to(accelerator.device)
-        noise_pred = model(latent, t_batch, cr_face, cr_latent)
-
-        latent = scheduler.step(noise_pred, t, latent, eta=0.0).prev_sample
-
-    images = vae.decode(latent / 0.18215).sample
-
-    return images
-
-
 def train_loop(
     model,
     vae,
@@ -127,8 +93,12 @@ def train_loop(
     model.train()
 
     for ln_face, hf_face, _ in train_dataloader:
-        hf_latent = vae.encode(hf_face).latent_dist.sample() * 0.18215
-
+        hf_latent = (
+            vae.encode(
+                F.interpolate(hf_face, args.image_res, mode="bicubic")
+            ).latent_dist.sample()
+            * 0.18215
+        )
         noise = torch.randn(hf_latent.shape).to(accelerator.device)
         bs = hf_latent.shape[0]
         timesteps = torch.randint(
@@ -138,7 +108,12 @@ def train_loop(
         noisy_latent = noise_scheduler.add_noise(hf_latent, noise, timesteps)
 
         cr_face = cr_module(ln_face)
-        cr_latent = vae.encode(cr_face).latent_dist.sample() * 0.18215
+        cr_latent = (
+            vae.encode(
+                F.interpolate(cr_face, args.image_res, mode="bicubic")
+            ).latent_dist.sample()
+            * 0.18215
+        )
 
         noise_pred = model(noisy_latent, timesteps, cr_face, cr_latent)
         loss = F.mse_loss(noise_pred, noise)

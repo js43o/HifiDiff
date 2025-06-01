@@ -8,7 +8,6 @@ from accelerate import Accelerator
 from tqdm.auto import tqdm
 import argparse
 import sys
-import gc
 import pyiqa
 from collections import OrderedDict
 
@@ -63,13 +62,17 @@ def ddim_sample(
 
     model.eval()
 
-    # 초기 latent: 표준 정규분포에서 샘플링
     latent = torch.randn((bs, latent_channels, latent_res, latent_res)).to(
         accelerator.device
     )
 
     cr_face = cr_module(ln_face)
-    cr_latent = vae.encode(cr_face).latent_dist.sample() * 0.18215
+    cr_latent = (
+        vae.encode(
+            F.interpolate(cr_face, args.image_res, mode="bicubic")
+        ).latent_dist.sample()
+        * 0.18215
+    )
 
     scheduler.set_timesteps(num_inference_steps)
 
@@ -99,8 +102,10 @@ def val_loop(model, vae, cr_module, noise_scheduler, val_dataloader, accelerator
 
     for idx, (ln_face, hf_face, _) in enumerate(val_dataloader):
         result = ddim_sample(ln_face, model, vae, cr_module, noise_scheduler)
+        result = F.interpolate(result, 128, mode="bicubic")
 
         result_normalized = (result - result.min()) / (result.max() - result.min())
+
         sample_hf_normalized = (hf_face - hf_face.min()) / (
             hf_face.max() - hf_face.min()
         )
