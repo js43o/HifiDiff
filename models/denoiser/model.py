@@ -6,6 +6,7 @@ from utils import SimpleGate
 from .conditional_naf import ConditionalNAFBlock
 from ..fpg.hca import HybridCrossAttention
 
+
 # sinusoidal positional embeds
 class SinusoidalPosEmb(nn.Module):
     def __init__(self, dim):
@@ -92,7 +93,7 @@ class Denoiser(nn.Module):
                     *[ConditionalNAFBlock(chan, time_dim) for _ in range(num)]
                 )
             )
-            
+
     def forward(self, latents, timesteps):
         if isinstance(timesteps, int) or isinstance(timesteps, float):
             timesteps = torch.tensor([timesteps])
@@ -110,7 +111,7 @@ class Denoiser(nn.Module):
             x = down(x)
 
         x, _ = self.middle_blks([x, t])
-            
+
         for decoder, up, enc_skip in zip(self.decoders, self.ups, enc_skips[::-1]):
             x = up(x)
             x = x + enc_skip
@@ -118,7 +119,7 @@ class Denoiser(nn.Module):
 
         x = self.ending(x)
         x = x[..., :height, :width]
-        
+
         return x
 
 
@@ -218,7 +219,7 @@ class FusedDenoiser(nn.Module):
             x = down(x)
 
         x, _ = self.middle_blks([x, t])
-        
+
         idc = self.idc_conv(identity_embedding)
         x = x + idc.reshape(batch, *x.shape[1:])
         x = self.hcas[0](facial_priors[0], x)
@@ -237,5 +238,5 @@ class FusedDenoiser(nn.Module):
 
         x = self.ending(x)
         x = x[..., :height, :width]
-        
+
         return x

@@ -29,7 +29,7 @@ parser.add_argument(
 parser.add_argument(
     "--image_res",
     type=int,
-    default=512,
+    default=128,
     help="Width and height of images used for training",
 )
 parser.add_argument(
@@ -71,8 +71,7 @@ def ddim_sample(
     )
 
     cr_face = cr_module(ln_face)
-    cr_face_upscaled = F.interpolate(cr_face, 512, mode="bicubic")
-    cr_latent = vae.encode(cr_face_upscaled).latent_dist.sample() * 0.18215
+    cr_latent = vae.encode(cr_face).latent_dist.sample() * 0.18215
 
     scheduler.set_timesteps(num_inference_steps)
 
@@ -97,8 +96,7 @@ def val_loop(model, vae, cr_module, noise_scheduler, val_dataloader, accelerator
     model.eval()
 
     for idx, (ln_face, hf_face, _) in enumerate(val_dataloader):
-        hf_face_upscaled = F.interpolate(hf_face, 512, mode="bicubic")
-        hf_latent = vae.encode(hf_face_upscaled).latent_dist.sample() * 0.18215
+        hf_latent = vae.encode(hf_face).latent_dist.sample() * 0.18215
 
         noise = torch.randn(hf_latent.shape).to(accelerator.device)
         bs = hf_latent.shape[0]
@@ -109,8 +107,7 @@ def val_loop(model, vae, cr_module, noise_scheduler, val_dataloader, accelerator
         noisy_latent = noise_scheduler.add_noise(hf_latent, noise, timesteps)
 
         cr_face = cr_module(ln_face)
-        cr_face_upscaled = F.interpolate(cr_face, 512, mode="bicubic")
-        cr_latent = vae.encode(cr_face_upscaled).latent_dist.sample() * 0.18215
+        cr_latent = vae.encode(cr_face).latent_dist.sample() * 0.18215
 
         noise_pred = model(noisy_latent, timesteps, cr_face, cr_latent)
         loss = F.mse_loss(noise_pred, noise)

@@ -2,7 +2,6 @@ import os
 import torch
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
-from torchvision.utils import save_image
 from diffusers import AutoencoderKL, DDIMScheduler
 from diffusers.optimization import get_cosine_schedule_with_warmup
 from accelerate import Accelerator
@@ -10,7 +9,6 @@ from tqdm.auto import tqdm
 import argparse
 import sys
 import gc
-import pyiqa
 
 from dataset import KfaceDataset
 from models.refiner import FacialRefiner
@@ -30,7 +28,7 @@ parser.add_argument(
 parser.add_argument(
     "--image_res",
     type=int,
-    default=512,
+    default=128,
     help="Width and height of images used for training",
 )
 parser.add_argument(
@@ -51,7 +49,7 @@ parser.add_argument(
     "--denoiser_ckpt",
     type=str,
     required=False,
-    default="checkpoints/denoiser/40.pt",
+    default="checkpoints/denoiser/03_w128/295.pt",
     help="A path of checkpoint (.pt) of the denoiser",
 )
 parser.add_argument(
@@ -94,8 +92,7 @@ def ddim_sample(
     )
 
     cr_face = cr_module(ln_face)
-    cr_face_upscaled = F.interpolate(cr_face, 512, mode="bicubic")
-    cr_latent = vae.encode(cr_face_upscaled).latent_dist.sample() * 0.18215
+    cr_latent = vae.encode(cr_face).latent_dist.sample() * 0.18215
 
     scheduler.set_timesteps(num_inference_steps)
 
@@ -131,8 +128,7 @@ def train_loop(
     model.train()
 
     for ln_face, hf_face, _ in train_dataloader:
-        hf_face_upscaled = F.interpolate(hf_face, 512, mode="bicubic")
-        hf_latent = vae.encode(hf_face_upscaled).latent_dist.sample() * 0.18215
+        hf_latent = vae.encode(hf_face).latent_dist.sample() * 0.18215
 
         noise = torch.randn(hf_latent.shape).to(accelerator.device)
         bs = hf_latent.shape[0]
@@ -143,8 +139,7 @@ def train_loop(
         noisy_latent = noise_scheduler.add_noise(hf_latent, noise, timesteps)
 
         cr_face = cr_module(ln_face)
-        cr_face_upscaled = F.interpolate(cr_face, 512, mode="bicubic")
-        cr_latent = vae.encode(cr_face_upscaled).latent_dist.sample() * 0.18215
+        cr_latent = vae.encode(cr_face).latent_dist.sample() * 0.18215
 
         noise_pred = model(noisy_latent, timesteps, cr_face, cr_latent)
         loss = F.mse_loss(noise_pred, noise)
@@ -194,7 +189,7 @@ train_dataloader = DataLoader(
     dataset=train_dataset, batch_size=args.batch_size, shuffle=True
 )
 
-model = FacialRefiner(args.idc_ckpt, args.denoiser_ckpt)
+model = FacialRefiner(args.image_res // 8, args.idc_ckpt, args.denoiser_ckpt)
 
 noise_scheduler = DDIMScheduler(
     num_train_timesteps=1000, beta_schedule="scaled_linear", prediction_type="epsilon"

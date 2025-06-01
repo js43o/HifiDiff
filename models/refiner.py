@@ -8,11 +8,11 @@ from .fpg.model import FacialPriorGuidance
 
 
 class FacialRefiner(nn.Module):
-    def __init__(self, idc_ckpt=None, denoiser_ckpt=None):
+    def __init__(self, latent_res=16, idc_ckpt=None, denoiser_ckpt=None):
         super().__init__()
 
         self.idc = ResNet50()
-        self.denoiser = FusedDenoiser(latent_res=64)  # 이미지 해상도 512 사용
+        self.denoiser = FusedDenoiser(latent_res)
         self.fpg = FacialPriorGuidance()
 
         if idc_ckpt is not None:
