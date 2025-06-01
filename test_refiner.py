@@ -24,7 +24,7 @@ parser.add_argument(
     help="A number for checkpoints and output path names",
 )
 parser.add_argument(
-    "--batch_size", type=int, default=2, help="A batch size of training dataset"
+    "--batch_size", type=int, default=4, help="A batch size of training dataset"
 )
 parser.add_argument(
     "--image_res",
@@ -42,13 +42,10 @@ parser.add_argument(
 parser.add_argument(
     "--refiner_ckpt",
     type=str,
-    default="checkpoints/refiner/0/20.pt",
+    default="checkpoints/refiner/0/24.pt",
     help="A path of checkpoint (.pt) of the refiner (denoiser and FPG module)",
 )
 args = parser.parse_args()
-
-
-torch.manual_seed(1)
 
 
 @torch.no_grad()
@@ -56,6 +53,7 @@ def ddim_sample(
     ln_face,
     model,
     vae,
+    cr_module,
     scheduler,
     num_inference_steps=50,
 ):
@@ -91,72 +89,54 @@ def val_loop(model, vae, cr_module, noise_scheduler, val_dataloader, accelerator
         total=len(val_dataloader), disable=not accelerator.is_local_main_process
     )
     global_step = 0
-    acc_loss = 0
-    sample_faces = (None, None)
+    scores = [0.0, 0.0, 0.0, 0.0]
+    metrics = []
     model.eval()
 
+    for i, metric_name in enumerate(["psnr", "ssim", "lpips", "niqe"]):
+        metric = pyiqa.create_metric(metric_name, device=accelerator.device)
+        metrics.append(metric)
+
     for idx, (ln_face, hf_face, _) in enumerate(val_dataloader):
-        hf_latent = vae.encode(hf_face).latent_dist.sample() * 0.18215
+        result = ddim_sample(ln_face, model, vae, cr_module, noise_scheduler)
 
-        noise = torch.randn(hf_latent.shape).to(accelerator.device)
-        bs = hf_latent.shape[0]
-        timesteps = torch.randint(
-            0, noise_scheduler.config.num_train_timesteps, (bs,)
-        ).to(accelerator.device)
+        result_normalized = (result - result.min()) / (result.max() - result.min())
+        sample_hf_normalized = (hf_face - hf_face.min()) / (
+            hf_face.max() - hf_face.min()
+        )
 
-        noisy_latent = noise_scheduler.add_noise(hf_latent, noise, timesteps)
-
-        cr_face = cr_module(ln_face)
-        cr_latent = vae.encode(cr_face).latent_dist.sample() * 0.18215
-
-        noise_pred = model(noisy_latent, timesteps, cr_face, cr_latent)
-        loss = F.mse_loss(noise_pred, noise)
+        for i in range(len(metrics)):
+            score = metrics[i](result_normalized, sample_hf_normalized).mean().item()
+            scores[i] += score
 
         progress_bar.update(1)
         logs = {
-            "loss": loss.detach().item(),
-            "step": global_step,
+            "PSNR": scores[0] / (idx + 1),
+            "SSIM": scores[1] / (idx + 1),
+            "LPIPS": scores[2] / (idx + 1),
         }
         progress_bar.set_postfix(**logs)
         global_step += 1
 
-        if accelerator.is_local_main_process:
-            acc_loss += loss.detach().item()
-            if idx == 0:
-                sample_faces = (ln_face, hf_face)
-
-        break
-
-    if accelerator.is_local_main_process:
-        print(
-            "✅ Validation loss = %.4f" % (acc_loss / len(val_dataloader)),
-            file=sys.stderr,
-        )
-
-        sample_ln, sample_hf = sample_faces
-        result = ddim_sample(sample_ln, model, vae, noise_scheduler)
-        result = F.interpolate(result, 128, mode="bicubic")
-
-        result_normalized = (result - result.min()) / (result.max() - result.min())
-        sample_hf_normalized = (sample_hf - sample_hf.min()) / (
-            sample_hf.max() - sample_hf.min()
-        )
-
-        for metric_name in ["psnr", "ssim", "lpips", "niqe"]:
-            metric = pyiqa.create_metric(metric_name, device=accelerator.device)
-            score = metric(result_normalized, sample_hf_normalized).mean().item()
-            print("🍊 %s = %.4f" % (metric_name, score))
-
         save_image(
-            torch.concat([sample_ln, result, sample_hf]),
+            torch.concat([ln_face, result, hf_face]),
             os.path.join("output/refiner/%s" % args.name, "validation.png"),
-            nrow=2,
+            nrow=4,
             normalize=True,
             value_range=(0, 1),
         )
 
-    gc.collect()
-    torch.cuda.empty_cache()
+    if accelerator.is_local_main_process:
+        print(
+            "✅ PSNR=%.4f / SSIM=%.4f / LPIPS=%.4f / NIQE=%.4f"
+            % (
+                scores[0] / len(val_dataloader),
+                scores[1] / len(val_dataloader),
+                scores[2] / len(val_dataloader),
+                scores[3] / len(val_dataloader),
+            ),
+            file=sys.stderr,
+        )
 
 
 val_dataset = KfaceDataset(
@@ -176,7 +156,10 @@ refiner_weights = temp_weights
 model.load_state_dict(refiner_weights)
 
 noise_scheduler = DDIMScheduler(
-    num_train_timesteps=1000, beta_schedule="scaled_linear", prediction_type="epsilon"
+    num_train_timesteps=1000,
+    beta_schedule="scaled_linear",
+    prediction_type="epsilon",
+    clip_sample_range=2.0,
 )
 
 accelerator = Accelerator()
