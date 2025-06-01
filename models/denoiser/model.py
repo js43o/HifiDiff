@@ -184,7 +184,7 @@ class FusedDenoiser(nn.Module):
         self.idc_conv = nn.Conv2d(
             2048, (self.width * (2**4)) * (self.latent_res // (2**4)) ** 2, (1, 1)
         )
-        self.hcas.append(HybridCrossAttention(chan, self.latent_res // (2**4)))
+        self.hcas.append(HybridCrossAttention(chan))
 
         for idx, num in enumerate([2, 2, 2, 2]):
             self.ups.append(
@@ -198,9 +198,7 @@ class FusedDenoiser(nn.Module):
                     *[ConditionalNAFBlock(chan, time_dim) for _ in range(num)]
                 )
             )
-            self.hcas.append(
-                HybridCrossAttention(chan, self.latent_res // (2 ** (4 - idx)))
-            )
+            self.hcas.append(HybridCrossAttention(chan))
 
     def forward(self, latents, timesteps, facial_priors, identity_embedding):
         if isinstance(timesteps, int) or isinstance(timesteps, float):

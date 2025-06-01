@@ -3,7 +3,7 @@ import torch.nn.functional as F
 
 
 class HybridCrossAttention(nn.Module):
-    def __init__(self, dim, res):
+    def __init__(self, dim):
         super().__init__()
 
         self.channel_mlp = nn.Sequential(
@@ -17,11 +17,16 @@ class HybridCrossAttention(nn.Module):
             nn.BatchNorm2d(1),
             nn.Sigmoid(),
         )
+        # with padding (3×3 convolution)
+        self.fused_mlp = nn.Sequential(
+            nn.Conv2d(dim, dim, (3, 3), 1, 1), nn.BatchNorm2d(dim), nn.ReLU()
+        )
 
     def forward(self, f_g, f_d):
         w_c = self.channel_cross_attention(f_g)
         w_s = self.spatial_cross_attention(f_g)
         f_o = f_d + w_c * f_d + w_s * f_d
+        f_o = self.fused_mlp(f_o)
 
         return f_o
 

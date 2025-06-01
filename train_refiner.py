@@ -23,7 +23,7 @@ parser.add_argument(
 )
 parser.add_argument("--num_epoch", type=int, default=24, help="A number of epoch")
 parser.add_argument(
-    "--batch_size", type=int, default=4, help="A batch size of training dataset"
+    "--batch_size", type=int, default=8, help="A batch size of training dataset"
 )
 parser.add_argument(
     "--image_res",
@@ -49,7 +49,7 @@ parser.add_argument(
     "--denoiser_ckpt",
     type=str,
     required=False,
-    default="checkpoints/denoiser/03_w128/295.pt",
+    default="checkpoints/denoiser/295.pt",
     help="A path of checkpoint (.pt) of the denoiser",
 )
 parser.add_argument(
@@ -86,7 +86,6 @@ def ddim_sample(
 
     model.eval()
 
-    # 초기 latent: 표준 정규분포에서 샘플링
     latent = torch.randn((bs, latent_channels, latent_res, latent_res)).to(
         accelerator.device
     )
