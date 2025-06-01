@@ -186,96 +186,13 @@ def train_loop(
     torch.cuda.empty_cache()
 
 
-def val_loop(
-    model, vae, cr_module, noise_scheduler, val_dataloader, epoch, accelerator
-):
-    progress_bar = tqdm(
-        total=len(val_dataloader), disable=not accelerator.is_local_main_process
-    )
-    progress_bar.set_description(f"Epoch {epoch}")
-    global_step = 0
-
-    acc_loss = 0
-    sample_faces = (None, None)
-    model.eval()
-
-    for idx, (ln_face, hf_face, _) in enumerate(val_dataloader):
-        hf_face_upscaled = F.interpolate(hf_face, 512, mode="bicubic")
-        hf_latent = vae.encode(hf_face_upscaled).latent_dist.sample() * 0.18215
-
-        noise = torch.randn(hf_latent.shape).to(accelerator.device)
-        bs = hf_latent.shape[0]
-        timesteps = torch.randint(
-            0, noise_scheduler.config.num_train_timesteps, (bs,)
-        ).to(accelerator.device)
-
-        noisy_latent = noise_scheduler.add_noise(hf_latent, noise, timesteps)
-
-        cr_face = cr_module(ln_face)
-        cr_face_upscaled = F.interpolate(cr_face, 512, mode="bicubic")
-        cr_latent = vae.encode(cr_face_upscaled).latent_dist.sample() * 0.18215
-
-        noise_pred = model(noisy_latent, timesteps, cr_face, cr_latent)
-        loss = F.mse_loss(noise_pred, noise)
-
-        progress_bar.update(1)
-        logs = {
-            "loss": loss.detach().item(),
-            "step": global_step,
-        }
-        progress_bar.set_postfix(**logs)
-        global_step += 1
-
-        if accelerator.is_local_main_process:
-            acc_loss += loss.detach().item()
-            if idx == 0:
-                sample_faces = (ln_face, hf_face)
-
-    if accelerator.is_local_main_process:
-        print(
-            "✅ Validation loss = %.4f" % (acc_loss / len(val_dataloader)),
-            file=sys.stderr,
-        )
-
-        sample_ln, sample_hf = sample_faces
-        result = ddim_sample(sample_ln, model, vae, noise_scheduler)
-        result = F.interpolate(result, 128, mode="bicubic")
-
-        result_normalized = (result - result.min()) / (result.max() - result.min())
-        sample_hf_normalized = (sample_hf - sample_hf.min()) / (
-            sample_hf.max() - sample_hf.min()
-        )
-
-        for metric_name in ["psnr", "ssim", "lpips", "niqe"]:
-            metric = pyiqa.create_metric(metric_name, device=accelerator.device)
-            score = metric(result_normalized, sample_hf_normalized).mean().item()
-            print("🍊 %s = %.4f" % (metric_name, score))
-
-        save_image(
-            torch.concat([sample_ln, result, sample_hf]),
-            os.path.join("output/refiner/%s" % args.name, "%d.png" % epoch),
-            nrow=2,
-            normalize=True,
-            value_range=(0, 1),
-        )
-
-    gc.collect()
-    torch.cuda.empty_cache()
-
-
 train_dataset = KfaceDataset(
     dataroot="../../datasets/kface",
     use="train",
 )
-# val_dataset = KfaceDataset(
-#     dataroot="../../datasets/kface",
-#     use="val",
-# )
-
 train_dataloader = DataLoader(
     dataset=train_dataset, batch_size=args.batch_size, shuffle=True
 )
-# val_dataloader = DataLoader(dataset=val_dataset, batch_size=args.batch_size)
 
 model = FacialRefiner(args.idc_ckpt, args.denoiser_ckpt)
 
@@ -293,7 +210,6 @@ accelerator = Accelerator()
 train_dataloader, model, optimizer, lr_scheduler = accelerator.prepare(
     train_dataloader, model, optimizer, lr_scheduler
 )
-# val_dataloader = accelerator.prepare(val_dataloader)
 
 vae = AutoencoderKL.from_pretrained(
     "stabilityai/stable-diffusion-2-1", subfolder="vae"
@@ -314,4 +230,3 @@ for epoch in range(args.num_epoch):
         epoch,
         accelerator,
     )
-    # val_loop(model, vae, cr_module, noise_scheduler, val_dataloader, epoch, accelerator)

@@ -61,6 +61,7 @@ os.makedirs("./checkpoints/denoiser/%s" % args.name, exist_ok=True)
 os.makedirs("./output/denoiser/%s" % args.name, exist_ok=True)
 torch.manual_seed(0)
 
+
 @torch.no_grad()
 def ddim_sample(
     model,
@@ -71,7 +72,7 @@ def ddim_sample(
 ):
     latent_res = args.image_res // 8
     latent_channels = 4
-    
+
     model.eval()
 
     # 초기 latent: 표준 정규분포에서 샘플링
@@ -101,28 +102,35 @@ def ddim_sample(
     )
 
 
-def train_loop(model, noise_scheduler, vae, optimizer, train_dataloader, lr_scheduler, accelerator, start_epoch=0):
+def train_loop(
+    model,
+    noise_scheduler,
+    vae,
+    optimizer,
+    train_dataloader,
+    lr_scheduler,
+    accelerator,
+    start_epoch=0,
+):
     global_step = 0
 
     for epoch in range(start_epoch, args.num_epoch):
-        progress_bar = tqdm(total=len(train_dataloader), disable=not accelerator.is_local_main_process)
+        progress_bar = tqdm(
+            total=len(train_dataloader), disable=not accelerator.is_local_main_process
+        )
         progress_bar.set_description(f"Epoch {epoch}")
-        
+
         acc_loss = 0
         model.train()
 
         for step, batch in enumerate(train_dataloader):
             clean_images = batch
-            clean_latents = (
-                vae.encode(clean_images).latent_dist.sample() * 0.18215
-            )
+            clean_latents = vae.encode(clean_images).latent_dist.sample() * 0.18215
 
             noise = torch.randn(clean_latents.shape).to(accelerator.device)
             bs = clean_latents.shape[0]
             timesteps = torch.randint(
-                0,
-                noise_scheduler.config.num_train_timesteps,
-                (bs,)
+                0, noise_scheduler.config.num_train_timesteps, (bs,)
             ).to(accelerator.device)
 
             # 각 타임스텝의 노이즈 크기에 따라 깨끗한 이미지에 노이즈를 추가합니다. (forward diffusion)
@@ -145,18 +153,21 @@ def train_loop(model, noise_scheduler, vae, optimizer, train_dataloader, lr_sche
             }
             progress_bar.set_postfix(**logs)
             global_step += 1
-            
+
             if accelerator.is_local_main_process:
                 acc_loss += loss.detach().item()
-                
+
         # 각 에포크가 끝난 후 evaluate()와 몇 가지 데모 이미지를 선택적으로 샘플링하고 모델을 저장합니다.
         if accelerator.is_local_main_process:
-            print("✅ average loss = %.6f" % (acc_loss / len(train_dataloader)), file=sys.stderr)
-        
-        if epoch % args.save_image_epoch == 0 or epoch == args.num_epoch:
+            print(
+                "✅ average loss = %.6f" % (acc_loss / len(train_dataloader)),
+                file=sys.stderr,
+            )
+
+        if epoch % args.save_image_epoch == 0 or epoch == args.num_epoch - 1:
             ddim_sample(model, vae, noise_scheduler, epoch)
 
-        if epoch % args.save_model_epoch == 0 or epoch == args.num_epoch:
+        if epoch % args.save_model_epoch == 0 or epoch == args.num_epoch - 1:
             torch.save(
                 {
                     "epoch": epoch,
@@ -165,7 +176,7 @@ def train_loop(model, noise_scheduler, vae, optimizer, train_dataloader, lr_sche
                 },
                 "./checkpoints/denoiser/%s/%d.pt" % (args.name, epoch),
             )
-        
+
         gc.collect()
         torch.cuda.empty_cache()
 
@@ -184,9 +195,7 @@ train_dataloader = torch.utils.data.DataLoader(
 )
 
 model = Denoiser(latent_res=args.image_res // 8)
-vae = AutoencoderKL.from_pretrained(
-    "stabilityai/stable-diffusion-2-1", subfolder="vae"
-)
+vae = AutoencoderKL.from_pretrained("stabilityai/stable-diffusion-2-1", subfolder="vae")
 noise_scheduler = DDIMScheduler(
     num_train_timesteps=1000, beta_schedule="scaled_linear", prediction_type="epsilon"
 )
@@ -202,19 +211,19 @@ if args.ckpt is not None:
     checkpoint = torch.load(args.ckpt)
     model_state_dict = checkpoint["model_state_dict"]
     optimizer_state_dict = checkpoint["optimizer_state_dict"]
-    
+
     if list(model_state_dict.keys())[0].startswith("module"):
         new_state_dict = OrderedDict()
         for k, v in model_state_dict.items():
             name = k[7:]  # remove `module.`
             new_state_dict[name] = v
-        
+
         model_state_dict = new_state_dict
-        
+
     model.load_state_dict(model_state_dict)
     optimizer.load_state_dict(optimizer_state_dict)
     start_epoch = int(checkpoint["epoch"])
-    
+
 
 accelerator = Accelerator()
 train_dataloader, model, optimizer, lr_scheduler = accelerator.prepare(
@@ -222,4 +231,13 @@ train_dataloader, model, optimizer, lr_scheduler = accelerator.prepare(
 )
 vae = vae.to(accelerator.device)
 
-train_loop(model, noise_scheduler, vae, optimizer, train_dataloader, lr_scheduler, accelerator, start_epoch)
+train_loop(
+    model,
+    noise_scheduler,
+    vae,
+    optimizer,
+    train_dataloader,
+    lr_scheduler,
+    accelerator,
+    start_epoch,
+)
