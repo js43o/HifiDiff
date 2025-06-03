@@ -8,7 +8,7 @@ from torch.utils.data import Dataset
 from torchvision.transforms import functional as F
 from torchvision.utils import save_image
 
-LIGHT_CONDITION = ["L1", "L3", "L6"]
+LIGHT_CONDITION = ["L1", "L3"]  # "L6" 임시 제외
 EXPRESSION_CONDITION = ["E01", "E02", "E03"]
 
 

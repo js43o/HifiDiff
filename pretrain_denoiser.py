@@ -23,7 +23,7 @@ parser.add_argument(
     help="A number for checkpoints and output path names",
 )
 parser.add_argument("--gpu", type=str, default="0", help="Which GPU to use")
-parser.add_argument("--num_epoch", type=int, default=100, help="A number of epoch")
+parser.add_argument("--num_epoch", type=int, default=300, help="A number of epoch")
 parser.add_argument(
     "--batch_size", type=int, default=8, help="A batch size of training dataset"
 )
@@ -73,7 +73,7 @@ def ddim_sample(
     latent_res = args.image_res // 8
     latent_channels = 4
 
-    model.eval()
+    unet = accelerator.unwrap_model(model)
 
     # 초기 latent: 표준 정규분포에서 샘플링
     latents = torch.randn(
@@ -86,7 +86,7 @@ def ddim_sample(
     for t in scheduler.timesteps:
         # 모델의 노이즈 예측
         t_batch = torch.full((args.sample_size,), t).to(accelerator.device)
-        noise_pred = model(latents, t_batch)
+        noise_pred = unet(latents, t_batch)
 
         # DDIM step
         latents = scheduler.step(noise_pred, t, latents, eta=0.0).prev_sample
@@ -115,13 +115,12 @@ def train_loop(
     global_step = 0
 
     for epoch in range(start_epoch, args.num_epoch):
+        model.train()
         progress_bar = tqdm(
             total=len(train_dataloader), disable=not accelerator.is_local_main_process
         )
         progress_bar.set_description(f"Epoch {epoch}")
-
-        acc_loss = 0
-        model.train()
+        train_loss = 0.0
 
         for step, batch in enumerate(train_dataloader):
             clean_images = batch
@@ -136,49 +135,43 @@ def train_loop(
             # 각 타임스텝의 노이즈 크기에 따라 깨끗한 이미지에 노이즈를 추가합니다. (forward diffusion)
             noisy_latents = noise_scheduler.add_noise(clean_latents, noise, timesteps)
 
-            # 노이즈를 반복적으로 예측합니다.
-            noise_pred = model(noisy_latents, timesteps)
-            loss = F.mse_loss(noise_pred, noise)
-            accelerator.backward(loss)
+            with accelerator.accumulate(model):
+                # 노이즈를 반복적으로 예측합니다.
+                noise_pred = model(noisy_latents, timesteps)
+                loss = F.mse_loss(noise_pred, noise)
+                accelerator.backward(loss)
 
-            optimizer.step()
-            lr_scheduler.step()
-            optimizer.zero_grad()
+                optimizer.step()
+                lr_scheduler.step()
+                optimizer.zero_grad()
 
-            progress_bar.update(1)
-            logs = {
-                "loss": loss.detach().item(),
-                "lr": lr_scheduler.get_last_lr()[0],
-                "step": global_step,
-            }
-            progress_bar.set_postfix(**logs)
-            global_step += 1
+                progress_bar.update(1)
+                logs = {
+                    "loss": loss.detach().item(),
+                    "lr": lr_scheduler.get_last_lr()[0],
+                    "step": global_step,
+                }
+                progress_bar.set_postfix(**logs)
+                global_step += 1
 
-            if accelerator.is_local_main_process:
-                acc_loss += loss.detach().item()
+                avg_loss = accelerator.gather(loss.repeat(args.batch_size)).mean()
+                train_loss += avg_loss.item()
 
-        # 각 에포크가 끝난 후 evaluate()와 몇 가지 데모 이미지를 선택적으로 샘플링하고 모델을 저장합니다.
-        if accelerator.is_local_main_process:
-            print(
-                "✅ average loss = %.6f" % (acc_loss / len(train_dataloader)),
-                file=sys.stderr,
-            )
+            accelerator.log({"train_loss": train_loss}, step=global_step)
+
+        progress_bar.close()
+        accelerator.wait_for_everyone()
+
+        if epoch % args.save_model_epoch == 0 or epoch == args.num_epoch - 1:
+            accelerator.save_state("./checkpoints/denoiser/%s/%d" % (args.name, epoch))
 
         if epoch % args.save_image_epoch == 0 or epoch == args.num_epoch - 1:
             ddim_sample(model, vae, noise_scheduler, epoch)
 
-        if epoch % args.save_model_epoch == 0 or epoch == args.num_epoch - 1:
-            torch.save(
-                {
-                    "epoch": epoch,
-                    "model_state_dict": model.state_dict(),
-                    "optimizer_state_dict": optimizer.state_dict(),
-                },
-                "./checkpoints/denoiser/%s/%d.pt" % (args.name, epoch),
-            )
-
         gc.collect()
         torch.cuda.empty_cache()
+
+    accelerator.end_training()
 
 
 train_dataset_kface = KfaceHRDataset(
@@ -207,6 +200,7 @@ lr_scheduler = get_cosine_schedule_with_warmup(
 )
 start_epoch = 0
 
+"""
 if args.ckpt is not None:
     checkpoint = torch.load(args.ckpt)
     model_state_dict = checkpoint["model_state_dict"]
@@ -223,7 +217,7 @@ if args.ckpt is not None:
     model.load_state_dict(model_state_dict)
     optimizer.load_state_dict(optimizer_state_dict)
     start_epoch = int(checkpoint["epoch"])
-
+"""
 
 accelerator = Accelerator()
 train_dataloader, model, optimizer, lr_scheduler = accelerator.prepare(
