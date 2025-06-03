@@ -150,7 +150,7 @@ val_dataset = KfaceDataset(
 )
 val_dataloader = DataLoader(dataset=val_dataset, batch_size=args.batch_size)
 
-model = FacialRefiner()
+model = FacialRefiner(latent_res=args.image_res // 8)
 refiner_weights = torch.load(args.refiner_ckpt)["model_state_dict"]
 temp_weights = OrderedDict()
 for k, v in refiner_weights.items():
