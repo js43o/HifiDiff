@@ -2,6 +2,7 @@ import os
 import torch
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
+from torchvision.utils import save_image
 from diffusers import AutoencoderKL, DDIMScheduler
 from diffusers.optimization import get_cosine_schedule_with_warmup
 from accelerate import Accelerator
@@ -9,6 +10,7 @@ from tqdm.auto import tqdm
 import argparse
 import sys
 import gc
+import pyiqa
 
 from dataset import KfaceDataset
 from models.refiner import FacialRefiner
@@ -72,6 +74,41 @@ os.makedirs("./output/refiner/%s" % args.name, exist_ok=True)
 torch.manual_seed(0)
 
 
+@torch.no_grad()
+def ddim_sample(
+    model,
+    vae,
+    scheduler,
+    epoch,
+    num_inference_steps=50,
+):
+    latent_res = args.image_res // 8
+    latent_channels = 4
+
+    unet = accelerator.unwrap_model(model)
+
+    latents = torch.randn(
+        (args.sample_size, latent_channels, latent_res, latent_res)
+    ).to(accelerator.device)
+
+    scheduler.set_timesteps(num_inference_steps)
+
+    for t in scheduler.timesteps:
+        t_batch = torch.full((args.sample_size,), t).to(accelerator.device)
+        noise_pred = unet(latents, t_batch)
+
+        latents = scheduler.step(noise_pred, t, latents, eta=0.0).prev_sample
+
+    images = vae.decode(latents / 0.18215).sample
+    save_image(
+        images,
+        os.path.join("output/refiner/%s" % args.name, "%d.png" % epoch),
+        nrow=2,
+        normalize=True,
+        value_range=(0, 1),
+    )
+
+
 def train_loop(
     model,
     vae,
@@ -89,10 +126,10 @@ def train_loop(
     progress_bar.set_description(f"Epoch {epoch}")
 
     global_step = 0
-    acc_loss = 0
     model.train()
 
     for ln_face, hf_face, _ in train_dataloader:
+        train_loss = 0.0
         hf_latent = (
             vae.encode(
                 F.interpolate(hf_face, args.image_res, mode="bicubic")
@@ -115,53 +152,106 @@ def train_loop(
             * 0.18215
         )
 
-        noise_pred = model(noisy_latent, timesteps, cr_face, cr_latent)
-        loss = F.mse_loss(noise_pred, noise)
-        accelerator.backward(loss)
+        with accelerator.accumulate(model):
+            noise_pred = model(noisy_latent, timesteps, cr_face, cr_latent)
+            loss = F.mse_loss(noise_pred, noise)
+            accelerator.backward(loss)
 
-        optimizer.step()
-        lr_scheduler.step()
-        optimizer.zero_grad()
+            optimizer.step()
+            lr_scheduler.step()
+            optimizer.zero_grad()
+
+        avg_loss = accelerator.gather(loss.repeat(args.batch_size)).mean()
+        train_loss += avg_loss.item()
 
         progress_bar.update(1)
+        global_step += 1
+        accelerator.log({"train_loss": train_loss}, step=global_step)
         logs = {
             "loss": loss.detach().item(),
             "lr": lr_scheduler.get_last_lr()[0],
             "step": global_step,
         }
         progress_bar.set_postfix(**logs)
-        global_step += 1
 
-        if accelerator.is_local_main_process:
-            acc_loss += loss.detach().item()
-
-    if accelerator.is_local_main_process:
-        print(
-            "🔄 Training loss = %.4f" % (acc_loss / len(train_dataloader)),
-            file=sys.stderr,
-        )
+    progress_bar.close()
+    accelerator.wait_for_everyone()
 
     if epoch % args.save_model_epoch == 0 or epoch == args.num_epoch - 1:
-        torch.save(
-            {
-                "epoch": epoch,
-                "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-            },
-            "./checkpoints/refiner/%s/%d.pt" % (args.name, epoch),
-        )
+        accelerator.save_state("./checkpoints/refiner/%s/%d" % (args.name, epoch))
 
     gc.collect()
     torch.cuda.empty_cache()
+
+
+def val_loop(model, vae, cr_module, noise_scheduler, val_dataloader, accelerator):
+    progress_bar = tqdm(
+        total=len(val_dataloader), disable=not accelerator.is_local_main_process
+    )
+    global_step = 0
+    scores = [0.0, 0.0, 0.0, 0.0]
+    metrics = []
+    model.eval()
+
+    for i, metric_name in enumerate(["psnr", "ssim", "lpips", "niqe"]):
+        metric = pyiqa.create_metric(metric_name, device=accelerator.device)
+        metrics.append(metric)
+
+    for idx, (ln_face, hf_face, _) in enumerate(val_dataloader):
+        result = ddim_sample(ln_face, model, vae, cr_module, noise_scheduler)
+        # result = F.interpolate(result, 128, mode="bicubic")
+
+        result_normalized = (result - result.min()) / (result.max() - result.min())
+        sample_hf_normalized = (hf_face - hf_face.min()) / (
+            hf_face.max() - hf_face.min()
+        )
+
+        for i in range(len(metrics)):
+            score = metrics[i](result_normalized, sample_hf_normalized).mean().item()
+            scores[i] += score
+
+        progress_bar.update(1)
+        logs = {
+            "PSNR": scores[0] / (idx + 1),
+            "SSIM": scores[1] / (idx + 1),
+            "LPIPS": scores[2] / (idx + 1),
+        }
+        progress_bar.set_postfix(**logs)
+        global_step += 1
+
+        save_image(
+            torch.concat([ln_face, result, hf_face]),
+            os.path.join("output/refiner/%s" % args.name, "validation.png"),
+            nrow=4,
+            normalize=True,
+            value_range=(0, 1),
+        )
+
+    if accelerator.is_local_main_process:
+        print(
+            "✅ PSNR=%.4f / SSIM=%.4f / LPIPS=%.4f / NIQE=%.4f"
+            % (
+                scores[0] / len(val_dataloader),
+                scores[1] / len(val_dataloader),
+                scores[2] / len(val_dataloader),
+                scores[3] / len(val_dataloader),
+            ),
+            file=sys.stderr,
+        )
 
 
 train_dataset = KfaceDataset(
     dataroot="../../datasets/kface",
     use="train",
 )
+val_dataset = KfaceDataset(
+    dataroot="../../datasets/kface",
+    use="val",
+)
 train_dataloader = DataLoader(
     dataset=train_dataset, batch_size=args.batch_size, shuffle=True
 )
+val_dataloader = DataLoader(dataset=val_dataset, batch_size=args.batch_size)
 
 model = FacialRefiner(args.image_res // 8, args.idc_ckpt, args.denoiser_ckpt)
 
@@ -179,6 +269,7 @@ accelerator = Accelerator()
 train_dataloader, model, optimizer, lr_scheduler = accelerator.prepare(
     train_dataloader, model, optimizer, lr_scheduler
 )
+val_dataloader, model = accelerator.prepare(val_dataloader, model)
 
 vae = AutoencoderKL.from_pretrained(
     "stabilityai/stable-diffusion-2-1", subfolder="vae"
@@ -199,3 +290,4 @@ for epoch in range(args.num_epoch):
         epoch,
         accelerator,
     )
+    val_loop(model, vae, cr_module, noise_scheduler, val_dataloader, accelerator)

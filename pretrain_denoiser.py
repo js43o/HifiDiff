@@ -6,10 +6,9 @@ from diffusers import AutoencoderKL, DDIMScheduler
 from diffusers.optimization import get_cosine_schedule_with_warmup
 from accelerate import Accelerator
 from tqdm.auto import tqdm
-from collections import OrderedDict
 import argparse
-import sys
 import gc
+
 
 from models.denoiser.model import Denoiser
 from dataset import KfaceHRDataset, CelebAHQDataset
@@ -23,7 +22,7 @@ parser.add_argument(
     help="A number for checkpoints and output path names",
 )
 parser.add_argument("--gpu", type=str, default="0", help="Which GPU to use")
-parser.add_argument("--num_epoch", type=int, default=300, help="A number of epoch")
+parser.add_argument("--num_epoch", type=int, default=500, help="A number of epoch")
 parser.add_argument(
     "--batch_size", type=int, default=8, help="A batch size of training dataset"
 )
@@ -75,24 +74,19 @@ def ddim_sample(
 
     unet = accelerator.unwrap_model(model)
 
-    # 초기 latent: 표준 정규분포에서 샘플링
     latents = torch.randn(
         (args.sample_size, latent_channels, latent_res, latent_res)
     ).to(accelerator.device)
 
-    # DDIM 스케줄러 설정
     scheduler.set_timesteps(num_inference_steps)
 
     for t in scheduler.timesteps:
-        # 모델의 노이즈 예측
         t_batch = torch.full((args.sample_size,), t).to(accelerator.device)
         noise_pred = unet(latents, t_batch)
 
-        # DDIM step
         latents = scheduler.step(noise_pred, t, latents, eta=0.0).prev_sample
 
-    # latent → 이미지 복원
-    images = vae.decode(latents / 0.18215).sample  # LDM scale factor 보정
+    images = vae.decode(latents / 0.18215).sample
     save_image(
         images,
         os.path.join("output/denoiser/%s" % args.name, "%d.png" % epoch),
@@ -120,9 +114,9 @@ def train_loop(
             total=len(train_dataloader), disable=not accelerator.is_local_main_process
         )
         progress_bar.set_description(f"Epoch {epoch}")
-        train_loss = 0.0
 
         for step, batch in enumerate(train_dataloader):
+            train_loss = 0.0
             clean_images = batch
             clean_latents = vae.encode(clean_images).latent_dist.sample() * 0.18215
 
@@ -145,25 +139,26 @@ def train_loop(
                 lr_scheduler.step()
                 optimizer.zero_grad()
 
-                progress_bar.update(1)
-                logs = {
-                    "loss": loss.detach().item(),
-                    "lr": lr_scheduler.get_last_lr()[0],
-                    "step": global_step,
-                }
-                progress_bar.set_postfix(**logs)
-                global_step += 1
+            avg_loss = accelerator.gather(loss.repeat(args.batch_size)).mean()
+            train_loss += avg_loss.item()
 
-                avg_loss = accelerator.gather(loss.repeat(args.batch_size)).mean()
-                train_loss += avg_loss.item()
-
+            progress_bar.update(1)
+            global_step += 1
             accelerator.log({"train_loss": train_loss}, step=global_step)
+            logs = {
+                "loss": loss.detach().item(),
+                "lr": lr_scheduler.get_last_lr()[0],
+                "step": global_step,
+            }
+            progress_bar.set_postfix(**logs)
 
         progress_bar.close()
         accelerator.wait_for_everyone()
 
         if epoch % args.save_model_epoch == 0 or epoch == args.num_epoch - 1:
-            accelerator.save_state("./checkpoints/denoiser/%s/%d" % (args.name, epoch))
+            accelerator.save_state(
+                "./checkpoints/denoiser/%s/%d" % (args.name, epoch),
+            )
 
         if epoch % args.save_image_epoch == 0 or epoch == args.num_epoch - 1:
             ddim_sample(model, vae, noise_scheduler, epoch)
@@ -190,7 +185,10 @@ train_dataloader = torch.utils.data.DataLoader(
 model = Denoiser(latent_res=args.image_res // 8)
 vae = AutoencoderKL.from_pretrained("stabilityai/stable-diffusion-2-1", subfolder="vae")
 noise_scheduler = DDIMScheduler(
-    num_train_timesteps=1000, beta_schedule="scaled_linear", prediction_type="epsilon"
+    num_train_timesteps=1000,
+    beta_schedule="scaled_linear",
+    prediction_type="epsilon",
+    clip_sample_range=2.0,
 )
 optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
 lr_scheduler = get_cosine_schedule_with_warmup(
@@ -200,30 +198,17 @@ lr_scheduler = get_cosine_schedule_with_warmup(
 )
 start_epoch = 0
 
-"""
-if args.ckpt is not None:
-    checkpoint = torch.load(args.ckpt)
-    model_state_dict = checkpoint["model_state_dict"]
-    optimizer_state_dict = checkpoint["optimizer_state_dict"]
-
-    if list(model_state_dict.keys())[0].startswith("module"):
-        new_state_dict = OrderedDict()
-        for k, v in model_state_dict.items():
-            name = k[7:]  # remove `module.`
-            new_state_dict[name] = v
-
-        model_state_dict = new_state_dict
-
-    model.load_state_dict(model_state_dict)
-    optimizer.load_state_dict(optimizer_state_dict)
-    start_epoch = int(checkpoint["epoch"])
-"""
-
 accelerator = Accelerator()
+
 train_dataloader, model, optimizer, lr_scheduler = accelerator.prepare(
     train_dataloader, model, optimizer, lr_scheduler
 )
 vae = vae.to(accelerator.device)
+
+if args.ckpt is not None:
+    accelerator.load_state(args.ckpt)
+    start_epoch = int(args.ckpt.split("/")[-1])
+
 
 train_loop(
     model,

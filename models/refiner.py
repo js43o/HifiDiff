@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from collections import OrderedDict
+from safetensors.torch import load_file
 
 from .idc.model import ResNet50
 from .denoiser.model import FusedDenoiser
@@ -20,14 +20,7 @@ class FacialRefiner(nn.Module):
         self.idc.eval()
 
         if denoiser_ckpt is not None:
-            denoiser_weights = torch.load(denoiser_ckpt)["model_state_dict"]
-            temp_weights = OrderedDict()
-            for k, v in denoiser_weights.items():
-                name = k[7:]  # remove `module.`
-                temp_weights[name] = v
-
-            denoiser_weights = temp_weights
-
+            denoiser_weights = load_file(denoiser_ckpt)
             self.denoiser.load_state_dict(denoiser_weights, strict=False)
             self.fpg.load_state_dict(denoiser_weights, strict=False)
 
