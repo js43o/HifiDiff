@@ -28,6 +28,9 @@ parser.add_argument(
     "--batch_size", type=int, default=8, help="A batch size of training dataset"
 )
 parser.add_argument(
+    "--sample_size", type=int, default=8, help="A batch size of training dataset"
+)
+parser.add_argument(
     "--image_res",
     type=int,
     default=128,
@@ -76,37 +79,39 @@ torch.manual_seed(0)
 
 @torch.no_grad()
 def ddim_sample(
-    model,
+    ln_face,
+    unet,
     vae,
+    cr_module,
     scheduler,
-    epoch,
     num_inference_steps=50,
 ):
     latent_res = args.image_res // 8
     latent_channels = 4
 
-    unet = accelerator.unwrap_model(model)
-
     latents = torch.randn(
-        (args.sample_size, latent_channels, latent_res, latent_res)
+        (args.batch_size, latent_channels, latent_res, latent_res)
     ).to(accelerator.device)
 
+    cr_face = cr_module(ln_face)
+    cr_latent = (
+        vae.encode(
+            F.interpolate(cr_face, args.image_res, mode="bicubic")
+        ).latent_dist.sample()
+        * 0.18215
+    )
     scheduler.set_timesteps(num_inference_steps)
 
     for t in scheduler.timesteps:
-        t_batch = torch.full((args.sample_size,), t).to(accelerator.device)
-        noise_pred = unet(latents, t_batch)
+        t_batch = torch.full((args.batch_size,), t).to(accelerator.device)
+        # print("🍊", latents.shape, t_batch.shape, cr_face.shape, cr_latent.shape)
+        noise_pred = unet(latents, t_batch, cr_face, cr_latent)
 
         latents = scheduler.step(noise_pred, t, latents, eta=0.0).prev_sample
 
     images = vae.decode(latents / 0.18215).sample
-    save_image(
-        images,
-        os.path.join("output/refiner/%s" % args.name, "%d.png" % epoch),
-        nrow=2,
-        normalize=True,
-        value_range=(0, 1),
-    )
+
+    return images
 
 
 def train_loop(
@@ -184,21 +189,19 @@ def train_loop(
     torch.cuda.empty_cache()
 
 
-def val_loop(model, vae, cr_module, noise_scheduler, val_dataloader, accelerator):
+def val_loop(
+    model, vae, cr_module, noise_scheduler, val_dataloader, epoch, accelerator, metrics
+):
     progress_bar = tqdm(
         total=len(val_dataloader), disable=not accelerator.is_local_main_process
     )
     global_step = 0
     scores = [0.0, 0.0, 0.0, 0.0]
-    metrics = []
     model.eval()
 
-    for i, metric_name in enumerate(["psnr", "ssim", "lpips", "niqe"]):
-        metric = pyiqa.create_metric(metric_name, device=accelerator.device)
-        metrics.append(metric)
-
     for idx, (ln_face, hf_face, _) in enumerate(val_dataloader):
-        result = ddim_sample(ln_face, model, vae, cr_module, noise_scheduler)
+        unet = accelerator.unwrap_model(model)
+        result = ddim_sample(ln_face, unet, vae, cr_module, noise_scheduler)
         # result = F.interpolate(result, 128, mode="bicubic")
 
         result_normalized = (result - result.min()) / (result.max() - result.min())
@@ -219,13 +222,21 @@ def val_loop(model, vae, cr_module, noise_scheduler, val_dataloader, accelerator
         progress_bar.set_postfix(**logs)
         global_step += 1
 
-        save_image(
-            torch.concat([ln_face, result, hf_face]),
-            os.path.join("output/refiner/%s" % args.name, "validation.png"),
-            nrow=4,
-            normalize=True,
-            value_range=(0, 1),
-        )
+        if accelerator.is_local_main_process and idx == 0:
+            print("🍊 saving the sample images")
+            save_image(
+                torch.concat(
+                    [
+                        ln_face[: args.sample_size],
+                        result[: args.sample_size],
+                        hf_face[: args.sample_size],
+                    ]
+                ),
+                os.path.join("output/refiner/%s/%d.png" % (args.name, epoch)),
+                nrow=args.sample_size,
+                normalize=True,
+                value_range=(0, 1),
+            )
 
     if accelerator.is_local_main_process:
         print(
@@ -278,6 +289,11 @@ cr_module = CoarseRestoration().to(accelerator.device)
 cr_module.load_state_dict(torch.load(args.cr_ckpt)["model_state_dict"])
 cr_module.eval()
 
+metrics = []
+for i, metric_name in enumerate(["psnr", "ssim", "lpips", "niqe"]):
+    metric = pyiqa.create_metric(metric_name, device=accelerator.device)
+    metrics.append(metric)
+
 for epoch in range(args.num_epoch):
     train_loop(
         model,
@@ -290,4 +306,13 @@ for epoch in range(args.num_epoch):
         epoch,
         accelerator,
     )
-    val_loop(model, vae, cr_module, noise_scheduler, val_dataloader, accelerator)
+    val_loop(
+        model,
+        vae,
+        cr_module,
+        noise_scheduler,
+        val_dataloader,
+        epoch,
+        accelerator,
+        metrics,
+    )
