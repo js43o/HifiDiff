@@ -9,7 +9,7 @@ from tqdm.auto import tqdm
 import argparse
 import sys
 import pyiqa
-from collections import OrderedDict
+from safetensors.torch import load_file
 
 from dataset import KfaceDataset
 from models.refiner import FacialRefiner
@@ -151,13 +151,7 @@ val_dataset = KfaceDataset(
 val_dataloader = DataLoader(dataset=val_dataset, batch_size=args.batch_size)
 
 model = FacialRefiner(latent_res=args.image_res // 8)
-refiner_weights = torch.load(args.refiner_ckpt)["model_state_dict"]
-temp_weights = OrderedDict()
-for k, v in refiner_weights.items():
-    name = k[7:]  # remove `module.`
-    temp_weights[name] = v
-
-refiner_weights = temp_weights
+refiner_weights = load_file(args.refiner_ckpt)
 model.load_state_dict(refiner_weights)
 
 noise_scheduler = DDIMScheduler(
