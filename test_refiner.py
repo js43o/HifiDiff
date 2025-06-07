@@ -131,7 +131,7 @@ def val_loop(model, vae, cr_module, noise_scheduler, val_dataloader, accelerator
         progress_bar.set_postfix(**logs)
         global_step += 1
 
-        if idx % args.save_image_iters == 0:
+        if accelerator.is_local_main_process and idx % args.save_image_iters == 0:
             save_image(
                 torch.concat([ln_face, result, hf_face]),
                 os.path.join("output/refiner/%s/test/%d.png" % (args.name, idx)),
@@ -167,7 +167,7 @@ noise_scheduler = DDIMScheduler(
     num_train_timesteps=1000,
     beta_schedule="scaled_linear",
     prediction_type="epsilon",
-    clip_sample_range=2.0,
+    clip_sample_range=3.0,
 )
 
 accelerator = Accelerator()
