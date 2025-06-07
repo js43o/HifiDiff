@@ -44,7 +44,15 @@ parser.add_argument(
     default="checkpoints/refiner/0/24.pt",
     help="A path of checkpoint (.pt) of the refiner (denoiser and FPG module)",
 )
+parser.add_argument(
+    "--save_image_iters",
+    type=int,
+    default=10,
+    help="Width and height of images used for training",
+)
 args = parser.parse_args()
+
+os.makedirs("output/refiner/%s/test" % args.name, exist_ok=True)
 
 
 @torch.no_grad()
@@ -123,13 +131,14 @@ def val_loop(model, vae, cr_module, noise_scheduler, val_dataloader, accelerator
         progress_bar.set_postfix(**logs)
         global_step += 1
 
-        save_image(
-            torch.concat([ln_face, result, hf_face]),
-            os.path.join("output/refiner/%s" % args.name, "validation.png"),
-            nrow=4,
-            normalize=True,
-            value_range=(0, 1),
-        )
+        if idx % args.save_image_iters == 0:
+            save_image(
+                torch.concat([ln_face, result, hf_face]),
+                os.path.join("output/refiner/%s/test/%d.png" % (args.name, idx)),
+                nrow=4,
+                normalize=True,
+                value_range=(0, 1),
+            )
 
     if accelerator.is_local_main_process:
         print(

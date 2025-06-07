@@ -73,7 +73,7 @@ args = parser.parse_args()
 
 
 os.makedirs("./checkpoints/refiner/%s" % args.name, exist_ok=True)
-os.makedirs("./output/refiner/%s" % args.name, exist_ok=True)
+os.makedirs("./output/refiner/%s/val" % args.name, exist_ok=True)
 torch.manual_seed(0)
 
 
@@ -232,7 +232,7 @@ def val_loop(
                         hf_face[: args.sample_size],
                     ]
                 ),
-                os.path.join("output/refiner/%s/%d.png" % (args.name, epoch)),
+                os.path.join("output/refiner/%s/val/%d.png" % (args.name, epoch)),
                 nrow=args.sample_size,
                 normalize=True,
                 value_range=(0, 1),
