@@ -3,7 +3,7 @@ import torch
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
 from torchvision.utils import save_image
-from diffusers import AutoencoderKL, DDIMScheduler
+from diffusers import AutoencoderKL, DDPMScheduler, DDIMScheduler
 from diffusers.optimization import get_cosine_schedule_with_warmup
 from accelerate import Accelerator
 from tqdm.auto import tqdm
@@ -266,9 +266,9 @@ val_dataloader = DataLoader(dataset=val_dataset, batch_size=args.batch_size)
 
 model = FacialRefiner(args.image_res // 8, args.idc_ckpt, args.denoiser_ckpt)
 
-noise_scheduler = DDIMScheduler(
-    num_train_timesteps=1000, beta_schedule="scaled_linear", prediction_type="epsilon"
-)
+ddpm_scheduler = DDPMScheduler(num_train_timesteps=1000)
+ddim_scheduler = DDIMScheduler()
+ddim_scheduler.set_timesteps(50)
 optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
 lr_scheduler = get_cosine_schedule_with_warmup(
     optimizer=optimizer,
@@ -299,7 +299,7 @@ for epoch in range(args.num_epoch):
         model,
         vae,
         cr_module,
-        noise_scheduler,
+        ddpm_scheduler,
         optimizer,
         train_dataloader,
         lr_scheduler,
@@ -310,7 +310,7 @@ for epoch in range(args.num_epoch):
         model,
         vae,
         cr_module,
-        noise_scheduler,
+        ddim_scheduler,
         val_dataloader,
         epoch,
         accelerator,

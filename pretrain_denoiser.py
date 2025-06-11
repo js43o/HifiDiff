@@ -2,7 +2,7 @@ import os
 import torch
 from torch.nn import functional as F
 from torchvision.utils import save_image
-from diffusers import AutoencoderKL, DDIMScheduler
+from diffusers import AutoencoderKL, DDPMScheduler, DDIMScheduler
 from diffusers.optimization import get_cosine_schedule_with_warmup
 from accelerate import Accelerator
 from tqdm.auto import tqdm
@@ -62,13 +62,7 @@ torch.manual_seed(0)
 
 
 @torch.no_grad()
-def ddim_sample(
-    model,
-    vae,
-    scheduler,
-    epoch,
-    num_inference_steps=50,
-):
+def ddim_sample(model, vae, scheduler, epoch):
     latent_res = args.image_res // 8
     latent_channels = 4
 
@@ -77,8 +71,6 @@ def ddim_sample(
     latents = torch.randn(
         (args.sample_size, latent_channels, latent_res, latent_res)
     ).to(accelerator.device)
-
-    scheduler.set_timesteps(num_inference_steps)
 
     for t in scheduler.timesteps:
         t_batch = torch.full((args.sample_size,), t).to(accelerator.device)
@@ -98,11 +90,12 @@ def ddim_sample(
 
 def train_loop(
     model,
-    noise_scheduler,
+    ddpm_scheduler,
     vae,
     optimizer,
     train_dataloader,
     lr_scheduler,
+    ddim_scheduler,
     accelerator,
     start_epoch=0,
 ):
@@ -123,11 +116,11 @@ def train_loop(
             noise = torch.randn(clean_latents.shape).to(accelerator.device)
             bs = clean_latents.shape[0]
             timesteps = torch.randint(
-                0, noise_scheduler.config.num_train_timesteps, (bs,)
+                0, ddpm_scheduler.config.num_train_timesteps, (bs,)
             ).to(accelerator.device)
 
             # 각 타임스텝의 노이즈 크기에 따라 깨끗한 이미지에 노이즈를 추가합니다. (forward diffusion)
-            noisy_latents = noise_scheduler.add_noise(clean_latents, noise, timesteps)
+            noisy_latents = ddpm_scheduler.add_noise(clean_latents, noise, timesteps)
 
             with accelerator.accumulate(model):
                 # 노이즈를 반복적으로 예측합니다.
@@ -161,7 +154,7 @@ def train_loop(
             )
 
         if epoch % args.save_image_epoch == 0 or epoch == args.num_epoch - 1:
-            ddim_sample(model, vae, noise_scheduler, epoch)
+            ddim_sample(model, vae, ddim_scheduler, epoch)
 
         gc.collect()
         torch.cuda.empty_cache()
@@ -184,12 +177,10 @@ train_dataloader = torch.utils.data.DataLoader(
 
 model = Denoiser(latent_res=args.image_res // 8)
 vae = AutoencoderKL.from_pretrained("stabilityai/stable-diffusion-2-1", subfolder="vae")
-noise_scheduler = DDIMScheduler(
-    num_train_timesteps=1000,
-    beta_schedule="scaled_linear",
-    prediction_type="epsilon",
-    clip_sample_range=2.0,
-)
+ddpm_scheduler = DDPMScheduler(num_train_timesteps=1000)
+ddim_scheduler = DDIMScheduler()
+ddim_scheduler.set_timesteps(50)
+
 optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
 lr_scheduler = get_cosine_schedule_with_warmup(
     optimizer=optimizer,
@@ -212,11 +203,12 @@ if args.ckpt is not None:
 
 train_loop(
     model,
-    noise_scheduler,
+    ddpm_scheduler,
     vae,
     optimizer,
     train_dataloader,
     lr_scheduler,
+    ddim_scheduler,
     accelerator,
     start_epoch,
 )
