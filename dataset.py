@@ -242,6 +242,41 @@ class KfaceHRDataset(Dataset):  # for pre-train the denoiser
         return len(self.imgs)
 
 
+class KfaceCropHRDataset(Dataset):  # for pre-train the denoiser
+    def __init__(self, dataroot: str, res=128):
+        super().__init__()
+        self.dataroot = os.path.join(dataroot, "train")
+        self.ids = os.listdir(self.dataroot)
+        self.res = res
+
+        self.imgs = []
+
+        for id in self.ids:
+            for light in range(1, 21):
+                for expression in EXPRESSION_CONDITION:
+                    for angle in range(1, 21):
+                        img_path = os.path.join(
+                            self.dataroot,
+                            id,
+                            "S001",
+                            "L%s" % light,
+                            expression,
+                            "C%s.jpg" % angle,
+                        )
+                        if os.path.exists(img_path):
+                            self.imgs.append(img_path)
+
+    def __getitem__(self, index):
+        img = Image.open(self.imgs[index]).convert("RGB")
+
+        img = img.resize((self.res, self.res), Image.Resampling.BICUBIC)
+
+        return F.to_tensor(img)
+
+    def __len__(self):
+        return len(self.imgs)
+
+
 class CelebAHQDataset(Dataset):  # for pre-train the denoiser
     def __init__(self, dataroot: str, res=128):
         super().__init__()
