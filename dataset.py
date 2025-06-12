@@ -113,7 +113,7 @@ class KfaceDataset(Dataset):
 
 
 class KfaceCropDataset(Dataset):
-    def __init__(self, dataroot: str, use="train"):
+    def __init__(self, dataroot: str, use="train", fixed_light=False):
         super().__init__()
         self.dataroot = os.path.join(dataroot, use)
         self.ids = os.listdir(self.dataroot)
@@ -122,7 +122,8 @@ class KfaceCropDataset(Dataset):
         self.gt_imgs = []
 
         for id in self.ids:
-            for light in range(1, 21):
+            lights = range(1, 21) if not fixed_light else [1]
+            for light in lights:
                 for expression in EXPRESSION_CONDITION:
                     gt_path = os.path.join(
                         self.dataroot, id, "S001", "L%d" % light, expression, "C7.jpg"
