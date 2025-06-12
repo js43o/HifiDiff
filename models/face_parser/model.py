@@ -1,19 +1,16 @@
 import os
-import argparse
 from typing import List, Tuple
-
 import numpy as np
 from PIL import Image
-from tqdm import tqdm
-
 import torch
 import torchvision.transforms as transforms
-from torchvision.transforms import functional as F
 
 from models.face_parser.bisenet import BiSeNet
 
 # eyes, eyebrows, nose, lips and teeth
 FACE_COMPONENTS = (2, 3, 4, 5, 10, 11, 12, 13)
+MODEL_NAME = "resnet34"
+CHECKPOINT_PATH = "checkpoints/face_parser/%s.pt" % MODEL_NAME
 
 
 def prepare_image(
@@ -74,33 +71,8 @@ def load_model(
     return model
 
 
-def get_files_to_process(input_path: str) -> List[str]:
-    """
-    Get a list of image files to process based on the input path.
-
-    Args:
-        input_path: Path to a single image file or directory of images
-
-    Returns:
-        List[str]: List of file paths to process
-    """
-    if os.path.isfile(input_path):
-        return [input_path]
-
-    # Get all files from the directory
-    files = [os.path.join(input_path, f) for f in os.listdir(input_path)]
-
-    # Filter for image files only
-    image_extensions = (".png", ".jpg", ".jpeg", ".bmp", ".tiff")
-    return [
-        f for f in files if os.path.isfile(f) and f.lower().endswith(image_extensions)
-    ]
-
-
 def extract_masks(image: Image.Image):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    MODEL_NAME = "resnet34"
-    CHECKPOINT_PATH = "checkpoints/face_parser/%s.pt" % MODEL_NAME
 
     model = load_model(MODEL_NAME, 19, CHECKPOINT_PATH, device)
 
@@ -112,11 +84,8 @@ def extract_masks(image: Image.Image):
     predicted_mask = output.squeeze(0).detach().cpu().numpy().argmax(0)
     masks = []
 
-    for i in range(0, predicted_mask.max()):
-        if i not in FACE_COMPONENTS:
-            continue
-
-        mask = Image.fromarray((predicted_mask == i).astype(np.uint8))
+    for idx in FACE_COMPONENTS:
+        mask = Image.fromarray((predicted_mask == idx).astype(np.uint8))
         mask = mask.resize(original_size, resample=Image.NEAREST)
         mask = np.array(mask)[..., np.newaxis]
 
