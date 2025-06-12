@@ -8,10 +8,11 @@ from accelerate import Accelerator
 from tqdm.auto import tqdm
 import argparse
 import gc
+import wandb
 
 
 from models.denoiser.model import Denoiser
-from dataset import KfaceHRDataset, CelebAHQDataset
+from dataset import KfaceCropHRDataset, KfaceHRDataset, CelebAHQDataset
 
 
 parser = argparse.ArgumentParser()
@@ -22,7 +23,7 @@ parser.add_argument(
     help="A number for checkpoints and output path names",
 )
 parser.add_argument("--gpu", type=str, default="0", help="Which GPU to use")
-parser.add_argument("--num_epoch", type=int, default=500, help="A number of epoch")
+parser.add_argument("--num_epochs", type=int, default=500, help="A number of epoch")
 parser.add_argument(
     "--batch_size", type=int, default=8, help="A batch size of training dataset"
 )
@@ -101,7 +102,7 @@ def train_loop(
 ):
     global_step = 0
 
-    for epoch in range(start_epoch, args.num_epoch):
+    for epoch in range(start_epoch, args.num_epochs):
         model.train()
         progress_bar = tqdm(
             total=len(train_dataloader), disable=not accelerator.is_local_main_process
@@ -145,15 +146,18 @@ def train_loop(
             }
             progress_bar.set_postfix(**logs)
 
+            if accelerator.is_local_main_process:
+                wandb.log({"train_loss": loss})
+
         progress_bar.close()
         accelerator.wait_for_everyone()
 
-        if epoch % args.save_model_epoch == 0 or epoch == args.num_epoch - 1:
+        if epoch % args.save_model_epoch == 0 or epoch == args.num_epochs - 1:
             accelerator.save_state(
                 "./checkpoints/denoiser/%s/%d" % (args.name, epoch),
             )
 
-        if epoch % args.save_image_epoch == 0 or epoch == args.num_epoch - 1:
+        if epoch % args.save_image_epoch == 0 or epoch == args.num_epochs - 1:
             ddim_sample(model, vae, ddim_scheduler, epoch)
 
         gc.collect()
@@ -162,6 +166,10 @@ def train_loop(
     accelerator.end_training()
 
 
+train_dataset_kface_crop = KfaceCropHRDataset(
+    dataroot="../../datasets/kface_crop", res=args.image_res
+)
+"""
 train_dataset_kface = KfaceHRDataset(
     dataroot="../../datasets/kface", res=args.image_res
 )
@@ -171,8 +179,9 @@ train_dataset_celeba = CelebAHQDataset(
 train_dataset = torch.utils.data.ConcatDataset(
     [train_dataset_kface, train_dataset_celeba]
 )
+"""
 train_dataloader = torch.utils.data.DataLoader(
-    train_dataset, batch_size=args.batch_size, shuffle=True
+    train_dataset_kface_crop, batch_size=args.batch_size, shuffle=True
 )
 
 model = Denoiser(latent_res=args.image_res // 8)
@@ -185,7 +194,7 @@ optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
 lr_scheduler = get_cosine_schedule_with_warmup(
     optimizer=optimizer,
     num_warmup_steps=500,
-    num_training_steps=(len(train_dataloader) * args.num_epoch),
+    num_training_steps=(len(train_dataloader) * args.num_epochs),
 )
 start_epoch = 0
 
@@ -200,6 +209,19 @@ if args.ckpt is not None:
     accelerator.load_state(args.ckpt)
     start_epoch = int(args.ckpt.split("/")[-1])
 
+if accelerator.is_local_main_process:
+    wandb.init(
+        # Set the project where this run will be logged
+        project="hifi_denoiser",
+        # We pass a run name (otherwise it’ll be randomly assigned, like sunshine-lollypop-10)
+        name=f"experiment_hifi_denoiser",
+        # Track hyperparameters and run metadata
+        config={
+            "architecture": "HifiDiff",
+            "dataset": "kface_crop",
+            "epochs": args.num_epochs,
+        },
+    )
 
 train_loop(
     model,
@@ -212,3 +234,6 @@ train_loop(
     accelerator,
     start_epoch,
 )
+
+if accelerator.is_local_main_process:
+    wandb.finish()
