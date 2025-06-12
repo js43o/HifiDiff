@@ -7,5 +7,6 @@ temp*
 *.jpeg
 *.bmp
 
+wandb/
 checkpoints/
 output/

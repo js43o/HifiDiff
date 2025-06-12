@@ -10,7 +10,7 @@ def key_region_loss(pred, y, y_patches):
 
             loss += F.mse_loss(pred_patch, y_patch)
 
-    return loss / y.shape[0]
+    return loss / (y.shape[0] * len(y_patches))
 
 
 def cr_loss(pred, y, y_patches):

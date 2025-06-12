@@ -2,10 +2,12 @@ import os
 import torch
 from torch.utils.data import DataLoader
 from torchvision.utils import save_image
+import wandb
 
 from dataset import KfaceCropDataset
 from models.cr.model import CoarseRestoration
 from models.cr.loss import cr_loss
+
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -29,14 +31,16 @@ def train_loop(dataloader, model, loss_fn, optimizer, current_epoch, loss_histor
         print(
             "loss=%.4f (batch: %d/%d)" % (loss, (batch_idx + 1) * BATCH_SIZE, num_data)
         )
+        wandb.log({"train_loss": loss})
         # save images
         if (batch_idx + 1) % 100 == 0:
             result = torch.cat([x[0], pred[0], y[0]], dim=-1)
-            if not os.path.exists("output/%d" % current_epoch):
-                os.makedirs("output/%d" % current_epoch)
+            os.makedirs("output/cr/%d" % current_epoch, exist_ok=True)
             save_image(
                 result,
-                os.path.join("output/%d" % current_epoch, "%d.jpg" % (batch_idx + 1)),
+                os.path.join(
+                    "output/cr/%d" % current_epoch, "%d.png" % (batch_idx + 1)
+                ),
             )
 
 
@@ -55,11 +59,27 @@ def val_loop(dataloader, model, loss_fn, loss_history=None):
     acc_loss /= len(dataloader)
 
     print("avg_loss: %.4f" % (acc_loss))
+    wandb.log({"val_acc": acc_loss})
 
 
 LEARNING_RATE = 5e-4
 BATCH_SIZE = 8
 EPOCHS = 24
+
+wandb.init(
+    # Set the project where this run will be logged
+    project="hifi_cr",
+    # We pass a run name (otherwise it’ll be randomly assigned, like sunshine-lollypop-10)
+    name=f"experiment_hifi_cr",
+    # Track hyperparameters and run metadata
+    config={
+        "learning_rate": LEARNING_RATE,
+        "architecture": "HifiDiff",
+        "dataset": "kface_crop",
+        "epochs": EPOCHS,
+    },
+)
+
 
 train_dataset = KfaceCropDataset(
     dataroot="../../datasets/kface_crop",
@@ -105,7 +125,8 @@ for epoch in range(EPOCHS):
                 "optimizer_state_dict": optimizer.state_dict(),
                 "loss": train_losses[-1],
             },
-            "./checkpoints/%d.pt" % epoch,
+            "./checkpoints/cr/%d.pt" % epoch,
         )
 
 print("✅ Done!")
+wandb.finish()
