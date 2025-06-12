@@ -8,32 +8,42 @@ from torch.utils.data import Dataset
 from torchvision.transforms import functional as F
 from torchvision.utils import save_image
 
+from models.face_parser.model import extract_masks
+
 LIGHT_CONDITION = ["L1", "L3"]  # "L6" 임시 제외
 EXPRESSION_CONDITION = ["E01", "E02", "E03"]
 
 
-def get_masked_patches(y, y_meta: List[str]):
+def get_masked_patches(y: Image.Image, y_meta: List[str] = None):
     patches = []
     y_width, y_height = y.size
     y = y.resize((128, 128), Image.Resampling.BICUBIC)
-    y = np.array(y)
 
-    head_left, head_top, _, _ = map(int, y_meta[7].split("\t"))
-    for line in y_meta[8:12]:  # eye_r, eye_l, nose, mouth
-        mask = np.zeros((y_height, y_width), dtype=np.uint8)
-        left, top, width, height = map(int, line.split("\t"))
-        mask[
-            top - head_top : top + height - head_top,
-            left - head_left : left + width - head_left,
-        ] = 1
-        mask = Image.fromarray(mask)
-        mask = mask.resize((128, 128), Image.Resampling.NEAREST)
-        mask = np.array(mask)[..., np.newaxis]
+    if y_meta is not None:
+        head_left, head_top, _, _ = map(int, y_meta[7].split("\t"))
 
-        patch = y * mask
-        patch = F.to_tensor(patch)
+        for line in y_meta[8:12]:  # eye_r, eye_l, nose, mouth
+            mask = np.zeros((y_height, y_width), dtype=np.uint8)
+            left, top, width, height = map(int, line.split("\t"))
+            mask[
+                top - head_top : top + height - head_top,
+                left - head_left : left + width - head_left,
+            ] = 1
+            mask = Image.fromarray(mask)
+            mask = mask.resize((128, 128), Image.Resampling.NEAREST)
+            mask = np.array(mask)[..., np.newaxis]
 
-        patches.append(patch)
+            patch = np.array(y) * mask
+            patch = F.to_tensor(patch)
+
+            patches.append(patch)
+    else:
+        masks = extract_masks(y)
+        for mask in masks:
+            patch = np.array(y) * mask
+            patch = F.to_tensor(patch)
+
+            patches.append(patch)
 
     return patches
 
@@ -97,6 +107,66 @@ class KfaceDataset(Dataset):
         gt_img = gt_img.resize((128, 128), Image.Resampling.BICUBIC)
 
         return F.to_tensor(input_img), F.to_tensor(gt_img), torch.stack(gt_patches)
+
+    def __len__(self):
+        return len(self.input_imgs)
+
+
+class KfaceCropDataset(Dataset):
+    def __init__(self, dataroot: str, use="train"):
+        super().__init__()
+        self.dataroot = os.path.join(dataroot, use)
+        self.ids = os.listdir(self.dataroot)
+
+        self.input_imgs = []
+        self.gt_imgs = []
+
+        for id in self.ids:
+            for light in range(1, 21):
+                for expression in EXPRESSION_CONDITION:
+                    gt_path = os.path.join(
+                        self.dataroot, id, "S001", "L%d" % light, expression, "C7.jpg"
+                    )
+                    if not os.path.exists(gt_path):
+                        continue
+
+                    cropped_count = 0
+
+                    for angle in range(1, 21):
+                        if angle == 7:
+                            continue
+
+                        img_path = os.path.join(
+                            self.dataroot,
+                            id,
+                            "S001",
+                            "L%d" % light,
+                            expression,
+                            "C%s.jpg" % angle,
+                        )
+                        if os.path.exists(img_path):
+                            self.input_imgs.append(img_path)
+                            cropped_count += 1
+
+                    self.gt_imgs.extend([gt_path] * cropped_count)
+
+    def __getitem__(self, index):
+        input_img = Image.open(self.input_imgs[index]).convert("RGB")
+        gt_img = Image.open(self.gt_imgs[index]).convert("RGB")
+
+        input_img = input_img.resize(
+            (32, 32), Image.Resampling.BICUBIC
+        )  # make it low-resolution
+        input_img = input_img.resize((128, 128), Image.Resampling.BICUBIC)
+
+        gt_patches = get_masked_patches(gt_img)
+        gt_patches = (
+            torch.stack(gt_patches) if len(gt_patches) > 0 else torch.tensor([])
+        )
+
+        gt_img = gt_img.resize((128, 128), Image.Resampling.BICUBIC)
+
+        return F.to_tensor(input_img), F.to_tensor(gt_img), gt_patches
 
     def __len__(self):
         return len(self.input_imgs)

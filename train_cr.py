@@ -3,11 +3,9 @@ import torch
 from torch.utils.data import DataLoader
 from torchvision.utils import save_image
 
-from dataset import KfaceDataset
+from dataset import KfaceCropDataset
 from models.cr.model import CoarseRestoration
 from models.cr.loss import cr_loss
-
-# os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -18,6 +16,7 @@ def train_loop(dataloader, model, loss_fn, optimizer, current_epoch, loss_histor
 
     for batch_idx, (x, y, y_patches) in enumerate(dataloader):
         x, y, y_patches = x.to(device), y.to(device), y_patches.to(device)
+
         pred = model(x)
         loss = loss_fn(pred, y, y_patches)
 
@@ -62,12 +61,12 @@ LEARNING_RATE = 5e-4
 BATCH_SIZE = 8
 EPOCHS = 24
 
-train_dataset = KfaceDataset(
-    dataroot="../../datasets/kface",
+train_dataset = KfaceCropDataset(
+    dataroot="../../datasets/kface_crop",
     use="train",
 )
-val_dataset = KfaceDataset(
-    dataroot="../../datasets/kface",
+val_dataset = KfaceCropDataset(
+    dataroot="../../datasets/kface_crop",
     use="val",
 )
 
