@@ -73,11 +73,11 @@ def train_loop(dataloader, model, loss_fn, optimizer, current_epoch):
         progress_bar.update(1)
         global_step += 1
         logs = {
-            "loss": loss,
+            "loss": loss.detach().item(),
             "step": global_step,
         }
         progress_bar.set_postfix(**logs)
-        wandb.log({"train_loss": loss})
+        wandb.log({"train_loss": loss.detach().item()})
 
         # save images
         if (batch + 1) % args.save_image_batch == 0:
@@ -103,12 +103,12 @@ def val_loop(dataloader, model, loss_fn, current_epoch):
         for batch, (x, y, y_patches) in enumerate(dataloader):
             x, y, y_patches = x.to(device), y.to(device), y_patches.to(device)
             pred = model(x)
-            loss = loss_fn(pred, y, y_patches).item()
-            acc_loss += loss
+            loss = loss_fn(pred, y, y_patches)
+            acc_loss += loss.detach().item()
 
             progress_bar.update(1)
             logs = {
-                "loss": loss,
+                "loss": loss.detach().item(),
                 "step": global_step,
             }
             progress_bar.set_postfix(**logs)
@@ -135,7 +135,7 @@ wandb.init(
     # Set the project where this run will be logged
     project="hifi_cr",
     # We pass a run name (otherwise it’ll be randomly assigned, like sunshine-lollypop-10)
-    name=f"experiment_hifi_cr_fixed_light",
+    name=args.name,
     # Track hyperparameters and run metadata
     config={
         "learning_rate": args.learning_rate,
@@ -161,7 +161,6 @@ val_dataloader = DataLoader(dataset=val_dataset, batch_size=args.sample_size)
 model = CoarseRestoration().to(device=device)
 loss_fn = cr_loss
 optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
-train_losses = [0.0]
 
 for epoch in range(args.num_epochs):
     train_loop(
@@ -181,7 +180,6 @@ for epoch in range(args.num_epochs):
                 "epoch": epoch,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
-                "loss": train_losses[-1],
             },
             "./checkpoints/cr/%s/%d.pt" % (args.name, epoch),
         )
