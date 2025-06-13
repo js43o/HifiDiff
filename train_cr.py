@@ -73,7 +73,7 @@ def train_loop(dataloader, model, loss_fn, optimizer, current_epoch):
         progress_bar.update(1)
         global_step += 1
         logs = {
-            "loss": loss.detach().item(),
+            "loss": loss,
             "step": global_step,
         }
         progress_bar.set_postfix(**logs)
@@ -108,7 +108,7 @@ def val_loop(dataloader, model, loss_fn, current_epoch):
 
             progress_bar.update(1)
             logs = {
-                "loss": loss.detach().item(),
+                "loss": loss,
                 "step": global_step,
             }
             progress_bar.set_postfix(**logs)

@@ -11,6 +11,7 @@ from torchvision.utils import save_image
 from models.face_parser.model import extract_masks
 
 LIGHT_CONDITION = ["L1", "L3"]  # "L6" 임시 제외
+CROP_LIGHT_CONDITION = ["L1", "L2", "L3", "L4", "L8", "L9", "L10", "L13"]
 EXPRESSION_CONDITION = ["E01", "E02", "E03"]
 
 
@@ -122,11 +123,10 @@ class KfaceCropDataset(Dataset):
         self.gt_imgs = []
 
         for id in self.ids:
-            lights = range(1, 21) if not fixed_light else [1]
-            for light in lights:
+            for light in CROP_LIGHT_CONDITION if not fixed_light else ["L1"]:
                 for expression in EXPRESSION_CONDITION:
                     gt_path = os.path.join(
-                        self.dataroot, id, "S001", "L%d" % light, expression, "C7.jpg"
+                        self.dataroot, id, "S001", light, expression, "C7.jpg"
                     )
                     if not os.path.exists(gt_path):
                         continue
@@ -141,7 +141,7 @@ class KfaceCropDataset(Dataset):
                             self.dataroot,
                             id,
                             "S001",
-                            "L%d" % light,
+                            light,
                             expression,
                             "C%s.jpg" % angle,
                         )
@@ -323,14 +323,14 @@ class KfaceCropHRDataset(Dataset):  # for pre-train the denoiser
         self.imgs = []
 
         for id in self.ids:
-            for light in range(1, 21):
+            for light in CROP_LIGHT_CONDITION:
                 for expression in EXPRESSION_CONDITION:
                     for angle in range(1, 21):
                         img_path = os.path.join(
                             self.dataroot,
                             id,
                             "S001",
-                            "L%s" % light,
+                            light,
                             expression,
                             "C%s.jpg" % angle,
                         )
