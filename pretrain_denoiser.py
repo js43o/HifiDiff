@@ -169,19 +169,15 @@ def train_loop(
 train_dataset_kface_crop = KfaceCropHRDataset(
     dataroot="../../datasets/kface_crop", res=args.image_res
 )
-"""
-train_dataset_kface = KfaceHRDataset(
-    dataroot="../../datasets/kface", res=args.image_res
-)
 train_dataset_celeba = CelebAHQDataset(
-    dataroot="../../datasets/celeba_hq_256", res=args.image_res
+    dataroot="../../datasets/celeba_hq_aligned", res=args.image_res
 )
 train_dataset = torch.utils.data.ConcatDataset(
-    [train_dataset_kface, train_dataset_celeba]
+    [train_dataset_kface_crop, train_dataset_celeba]
 )
-"""
+
 train_dataloader = torch.utils.data.DataLoader(
-    train_dataset_kface_crop, batch_size=args.batch_size, shuffle=True
+    train_dataset, batch_size=args.batch_size, shuffle=True
 )
 
 model = Denoiser(latent_res=args.image_res // 8)
@@ -214,7 +210,7 @@ if accelerator.is_local_main_process:
         # Set the project where this run will be logged
         project="hifi_denoiser",
         # We pass a run name (otherwise it’ll be randomly assigned, like sunshine-lollypop-10)
-        name=f"experiment_hifi_denoiser",
+        name=f"03_crop",
         # Track hyperparameters and run metadata
         config={
             "architecture": "HifiDiff",
