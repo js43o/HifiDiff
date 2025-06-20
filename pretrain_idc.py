@@ -42,8 +42,10 @@ def train_loop(dataloader, cr_module, model, loss_fn, optimizer, current_epoch):
         wandb.log({"train_loss": loss.detach().item()})
 
         if (batch_idx + 1) % 100 == 0:
-            output = torch.concat((cr_pred, y, other))
-            save_image(output, "output/idc/%d.png" % (batch_idx + 1))
+            output = torch.concat((y, cr_pred, other))
+            save_image(
+                output, "output/idc/%d.png" % (batch_idx + 1), nrow=cr_pred.shape[0]
+            )
 
     torch.cuda.empty_cache()
     gc.collect()
@@ -63,11 +65,7 @@ def val_loop(dataloader, cr_module, model, loss_fn):
             loss = loss_fn(id_cr, id_hf, id_ck)
 
             progress_bar.update(1)
-            global_step += 1
-            logs = {
-                "loss": loss.detach().item(),
-                "step": global_step,
-            }
+            logs = {"loss": loss.detach().item()}
             progress_bar.set_postfix(**logs)
             acc_loss += loss.detach().item()
 

@@ -310,7 +310,7 @@ class KfaceCropDataset_IDC(Dataset):  # for pre-train the IDC module
                             self.input_imgs.append(img_path)
                             cropped_count += 1
 
-                    self.gt_imgs.extend([img_path] * cropped_count)
+                    self.gt_imgs.extend([gt_path] * cropped_count)
 
                     for idx_other in range(idx + 1, idx + cropped_count + 1):
                         img_path = os.path.join(
