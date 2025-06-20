@@ -90,6 +90,9 @@ def train_loop(dataloader, model, loss_fn, optimizer, current_epoch):
                 ),
             )
 
+    gc.collect()
+    torch.cuda.empty_cache()
+
 
 def val_loop(dataloader, model, loss_fn, current_epoch):
     progress_bar = tqdm(total=len(dataloader))
@@ -129,6 +132,9 @@ def val_loop(dataloader, model, loss_fn, current_epoch):
 
     print("avg_loss: %.4f" % (acc_loss))
     wandb.log({"val_acc": acc_loss})
+
+    gc.collect()
+    torch.cuda.empty_cache()
 
 
 wandb.init(

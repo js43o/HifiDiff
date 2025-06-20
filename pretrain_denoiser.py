@@ -75,7 +75,7 @@ def ddim_sample(model, vae, scheduler, epoch):
 
     for t in scheduler.timesteps:
         t_batch = torch.full((args.sample_size,), t).to(accelerator.device)
-        noise_pred = unet(latents, t_batch)
+        noise_pred = unet(latents, t_batch).sample
 
         latents = scheduler.step(noise_pred, t, latents, eta=0.0).prev_sample
 
@@ -125,7 +125,7 @@ def train_loop(
 
             with accelerator.accumulate(model):
                 # 노이즈를 반복적으로 예측합니다.
-                noise_pred = model(noisy_latents, timesteps)
+                noise_pred = model(noisy_latents, timesteps).sample
                 loss = F.mse_loss(noise_pred, noise)
                 accelerator.backward(loss)
 

@@ -12,7 +12,7 @@ import sys
 import gc
 import pyiqa
 
-from dataset import KfaceDataset
+from dataset import KfaceCropDataset
 from models.refiner import FacialRefiner
 from models.cr.model import CoarseRestoration
 
@@ -251,14 +251,8 @@ def val_loop(
         )
 
 
-train_dataset = KfaceDataset(
-    dataroot="../../datasets/kface",
-    use="train",
-)
-val_dataset = KfaceDataset(
-    dataroot="../../datasets/kface",
-    use="val",
-)
+train_dataset = KfaceCropDataset(dataroot="../../datasets/kface", use="train")
+val_dataset = KfaceCropDataset(dataroot="../../datasets/kface", use="val")
 train_dataloader = DataLoader(
     dataset=train_dataset, batch_size=args.batch_size, shuffle=True
 )

@@ -1,10 +1,16 @@
 import math
 import torch
 from torch import nn
+from diffusers import ConfigMixin
 
 from utils import SimpleGate
 from .conditional_naf import ConditionalNAFBlock
 from ..fpg.hca import HybridCrossAttention
+
+
+class UNet2DOutput:
+    def __init__(self, data):
+        self.sample = data
 
 
 # sinusoidal positional embeds
@@ -27,9 +33,13 @@ class Denoiser(nn.Module):
     def __init__(self, latent_res):
         super().__init__()
 
-        self.latent_channel = 4
-        self.latent_res = latent_res
         self.width = 32 * 4
+        self.dtype = torch.float32
+        self.device = torch.device("cuda")
+
+        self.config = ConfigMixin()
+        self.config.in_channels = 4
+        self.config.sample_size = latent_res
 
         fourier_dim = self.width
         sinu_pos_emb = SinusoidalPosEmb(fourier_dim)
@@ -43,7 +53,7 @@ class Denoiser(nn.Module):
         )
 
         self.intro = nn.Conv2d(
-            in_channels=self.latent_channel,
+            in_channels=self.config.in_channels,
             out_channels=self.width,
             kernel_size=3,
             padding=1,
@@ -53,7 +63,7 @@ class Denoiser(nn.Module):
         )
         self.ending = nn.Conv2d(
             in_channels=self.width,
-            out_channels=self.latent_channel,
+            out_channels=self.config.in_channels,
             kernel_size=3,
             padding=1,
             stride=1,
@@ -95,8 +105,12 @@ class Denoiser(nn.Module):
             )
 
     def forward(self, latents, timesteps):
-        if isinstance(timesteps, int) or isinstance(timesteps, float):
-            timesteps = torch.tensor([timesteps])
+        if (
+            isinstance(timesteps, int)
+            or isinstance(timesteps, float)
+            or len(timesteps.shape) == 0
+        ):
+            timesteps = torch.full((latents.shape[0],), timesteps).to(self.device)
 
         x = latents
         _, _, height, width = x.shape
@@ -120,15 +134,20 @@ class Denoiser(nn.Module):
         x = self.ending(x)
         x = x[..., :height, :width]
 
-        return x
+        result = UNet2DOutput(x)
+
+        return result
 
 
 class FusedDenoiser(nn.Module):
     def __init__(self, latent_res):
         super().__init__()
 
-        self.latent_channel = 4
-        self.latent_res = latent_res
+        self.dtype = torch.float32
+        self.device = torch.device("cuda")
+        self.config = ConfigMixin()
+        self.config.in_channels = 4
+        self.config.sample_size = latent_res
         self.width = 32
 
         fourier_dim = self.width
