@@ -71,11 +71,11 @@ def load_model(
     return model
 
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = load_model(MODEL_NAME, 19, CHECKPOINT_PATH, device)
+
+
 def extract_masks(image: Image.Image):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    model = load_model(MODEL_NAME, 19, CHECKPOINT_PATH, device)
-
     original_size = image.size  # (width, height)
     image_batch = prepare_image(image).to(device)
 

@@ -266,6 +266,82 @@ class KfaceDataset_IDC(Dataset):  # for pre-train the IDC module
         return len(self.input_imgs)
 
 
+class KfaceCropDataset_IDC(Dataset):  # for pre-train the IDC module
+    def __init__(self, dataroot: str, use="train"):
+        super().__init__()
+        self.dataroot = os.path.join(dataroot, use)
+        self.ids = os.listdir(self.dataroot)
+        shuffle(self.ids)
+        self.ids.extend(self.ids[:19])  # loop for the last 19 persons
+
+        self.input_imgs = []
+        self.gt_imgs = []
+        self.other_imgs = []
+
+        for idx in range(len(self.ids) - 19):
+            for light in CROP_LIGHT_CONDITION:
+                for expression in EXPRESSION_CONDITION:
+                    gt_path = os.path.join(
+                        self.dataroot,
+                        self.ids[idx],
+                        "S001",
+                        light,
+                        expression,
+                        "C7.jpg",
+                    )
+                    if not os.path.exists(gt_path):
+                        continue
+
+                    cropped_count = 0
+
+                    for angle in range(1, 21):
+                        if angle == 7:  # frontal face
+                            continue
+
+                        img_path = os.path.join(
+                            self.dataroot,
+                            self.ids[idx],
+                            "S001",
+                            light,
+                            expression,
+                            "C%s.jpg" % angle,
+                        )
+                        if os.path.exists(img_path):
+                            self.input_imgs.append(img_path)
+                            cropped_count += 1
+
+                    self.gt_imgs.extend([img_path] * cropped_count)
+
+                    for idx_other in range(idx + 1, idx + cropped_count + 1):
+                        img_path = os.path.join(
+                            self.dataroot,
+                            self.ids[idx_other],
+                            "S001",
+                            light,
+                            expression,
+                            "C7.jpg",
+                        )
+
+                        self.other_imgs.append(img_path)
+
+    def __getitem__(self, index):
+        input_img = Image.open(self.input_imgs[index]).convert("RGB")
+        gt_img = Image.open(self.gt_imgs[index]).convert("RGB")
+        other_img = Image.open(self.other_imgs[index]).convert("RGB")
+
+        input_img = input_img.resize(
+            (32, 32), Image.Resampling.BICUBIC
+        )  # make it low-resolution
+        input_img = input_img.resize((128, 128), Image.Resampling.BICUBIC)
+        gt_img = gt_img.resize((128, 128), Image.Resampling.BICUBIC)
+        other_img = other_img.resize((128, 128), Image.Resampling.BICUBIC)
+
+        return F.to_tensor(input_img), F.to_tensor(gt_img), F.to_tensor(other_img)
+
+    def __len__(self):
+        return len(self.input_imgs)
+
+
 class KfaceHRDataset(Dataset):  # for pre-train the denoiser
     def __init__(self, dataroot: str, res=128):
         super().__init__()

@@ -5,7 +5,6 @@ from torchvision.utils import save_image
 from tqdm.auto import tqdm
 import wandb
 import argparse
-import gc
 
 from dataset import KfaceCropDataset
 from models.cr.model import CoarseRestoration
@@ -152,12 +151,8 @@ wandb.init(
 )
 
 
-train_dataset = KfaceCropDataset(
-    dataroot="../../datasets/kface_crop", use="train", fixed_light=True
-)
-val_dataset = KfaceCropDataset(
-    dataroot="../../datasets/kface_crop", use="val", fixed_light=True
-)
+train_dataset = KfaceCropDataset(dataroot="../../datasets/kface_crop", use="train")
+val_dataset = KfaceCropDataset(dataroot="../../datasets/kface_crop", use="val")
 
 train_dataloader = DataLoader(
     dataset=train_dataset, batch_size=args.batch_size, shuffle=True

@@ -34,7 +34,7 @@ def infer_loop(dataloader, model, loss_fn):
     print("✅ done! (avg_loss=%.4f)" % (acc_loss))
 
 
-CHECKPOINT_PATH = "checkpoints/20.pt"
+CHECKPOINT_PATH = "checkpoints/cr/24.pt"
 BATCH_SIZE = 8
 
 infer_dataset = KfaceDataset(
