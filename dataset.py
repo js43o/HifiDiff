@@ -6,45 +6,33 @@ import numpy as np
 from random import shuffle
 from torch.utils.data import Dataset
 from torchvision.transforms import functional as F
-from torchvision.utils import save_image
-
-from models.face_parser.model import extract_masks
 
 LIGHT_CONDITION = ["L1", "L3"]  # "L6" 임시 제외
 CROP_LIGHT_CONDITION = ["L1", "L2", "L3", "L4", "L8", "L9", "L10", "L13"]
 EXPRESSION_CONDITION = ["E01", "E02", "E03"]
 
 
-def get_masked_patches(y: Image.Image, y_meta: List[str] = None):
+def get_masked_patches(y: Image.Image, y_meta: List[str]):
     patches = []
     y_width, y_height = y.size
-    y = y.resize((128, 128), Image.Resampling.BICUBIC)
 
-    if y_meta is not None:
-        head_left, head_top, _, _ = map(int, y_meta[7].split("\t"))
+    head_left, head_top, _, _ = map(int, y_meta[7].split("\t"))
 
-        for line in y_meta[8:12]:  # eye_r, eye_l, nose, mouth
-            mask = np.zeros((y_height, y_width), dtype=np.uint8)
-            left, top, width, height = map(int, line.split("\t"))
-            mask[
-                top - head_top : top + height - head_top,
-                left - head_left : left + width - head_left,
-            ] = 1
-            mask = Image.fromarray(mask)
-            mask = mask.resize((128, 128), Image.Resampling.NEAREST)
-            mask = np.array(mask)[..., np.newaxis]
+    for line in y_meta[8:12]:  # eye_r, eye_l, nose, mouth
+        mask = np.zeros((y_height, y_width), dtype=np.uint8)
+        left, top, width, height = map(int, line.split("\t"))
+        mask[
+            top - head_top : top + height - head_top,
+            left - head_left : left + width - head_left,
+        ] = 1
+        mask = Image.fromarray(mask)
+        mask = mask.resize((128, 128), Image.Resampling.NEAREST)
+        mask = np.array(mask)[..., np.newaxis]
 
-            patch = np.array(y) * mask
-            patch = F.to_tensor(patch)
+        patch = np.array(y) * mask
+        patch = F.to_tensor(patch)
 
-            patches.append(patch)
-    else:
-        masks = extract_masks(y)
-        for mask in masks:
-            patch = np.array(y) * mask
-            patch = F.to_tensor(patch)
-
-            patches.append(patch)
+        patches.append(patch)
 
     return patches
 
@@ -104,8 +92,8 @@ class KfaceDataset(Dataset):
 
         left, top, width, height = map(int, gt_meta[7].split("\t"))
         gt_img = gt_img.crop((left, top, left + width, top + height))
-        gt_patches = get_masked_patches(gt_img, gt_meta)
         gt_img = gt_img.resize((128, 128), Image.Resampling.BICUBIC)
+        gt_patches = get_masked_patches(gt_img, gt_meta)
 
         return F.to_tensor(input_img), F.to_tensor(gt_img), torch.stack(gt_patches)
 
@@ -114,16 +102,18 @@ class KfaceDataset(Dataset):
 
 
 class KfaceCropDataset(Dataset):
-    def __init__(self, dataroot: str, use="train", fixed_light=False):
+    def __init__(self, dataroot: str, use="train", includes_patches=True):
         super().__init__()
         self.dataroot = os.path.join(dataroot, use)
         self.ids = os.listdir(self.dataroot)
+        self.includes_patches = includes_patches
 
         self.input_imgs = []
         self.gt_imgs = []
+        self.gt_patches = []
 
         for id in self.ids:
-            for light in CROP_LIGHT_CONDITION if not fixed_light else ["L1"]:
+            for light in CROP_LIGHT_CONDITION:
                 for expression in EXPRESSION_CONDITION:
                     gt_path = os.path.join(
                         self.dataroot, id, "S001", light, expression, "C7.jpg"
@@ -149,6 +139,21 @@ class KfaceCropDataset(Dataset):
                             self.input_imgs.append(img_path)
                             cropped_count += 1
 
+                            if self.includes_patches:
+                                patches = []
+                                for patch in range(8):
+                                    patch_path = os.path.join(
+                                        self.dataroot,
+                                        id,
+                                        "S001",
+                                        light,
+                                        expression,
+                                        "C%s_%s.jpg" % (angle, patch),
+                                    )
+                                    patches.append(patch_path)
+
+                                self.gt_patches.append(patches)
+
                     self.gt_imgs.extend([gt_path] * cropped_count)
 
     def __getitem__(self, index):
@@ -159,15 +164,18 @@ class KfaceCropDataset(Dataset):
             (32, 32), Image.Resampling.BICUBIC
         )  # make it low-resolution
         input_img = input_img.resize((128, 128), Image.Resampling.BICUBIC)
-
-        gt_patches = get_masked_patches(gt_img)
-        gt_patches = (
-            torch.stack(gt_patches) if len(gt_patches) > 0 else torch.tensor([])
-        )
-
         gt_img = gt_img.resize((128, 128), Image.Resampling.BICUBIC)
 
-        return F.to_tensor(input_img), F.to_tensor(gt_img), gt_patches
+        if self.includes_patches:
+            gt_patches = []
+            for patch_src in self.gt_patches[index]:
+                patch = Image.open(patch_src).convert("RGB")
+                patch = F.to_tensor(patch)
+                gt_patches.append(patch)
+
+            return F.to_tensor(input_img), F.to_tensor(gt_img), torch.stack(gt_patches)
+
+        return F.to_tensor(input_img), F.to_tensor(gt_img)
 
     def __len__(self):
         return len(self.input_imgs)
