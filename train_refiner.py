@@ -8,9 +8,9 @@ from diffusers.optimization import get_cosine_schedule_with_warmup
 from accelerate import Accelerator
 from tqdm.auto import tqdm
 import argparse
-import sys
 import gc
 import pyiqa
+import wandb
 
 from dataset_multipie import MultiPIEDataset
 from models.refiner import FacialRefiner
@@ -23,7 +23,7 @@ parser.add_argument(
     default="multipie",
     help="A number for checkpoints and output path names",
 )
-parser.add_argument("--num_epoch", type=int, default=24, help="A number of epoch")
+parser.add_argument("--num_epochs", type=int, default=24, help="A number of epoch")
 parser.add_argument(
     "--batch_size", type=int, default=8, help="A batch size of training dataset"
 )
@@ -40,27 +40,39 @@ parser.add_argument(
     "--cr_ckpt",
     type=str,
     required=False,
+<<<<<<< HEAD
     default="checkpoints/cr/multipie/23.pt",
+=======
+    default="checkpoints/cr/03_crop/23.pt",
+>>>>>>> 📈 Refiner 훈련 시 wandb 연동
     help="A path of checkpoint (.pt) of the CR module",
 )
 parser.add_argument(
     "--idc_ckpt",
     type=str,
     required=False,
+<<<<<<< HEAD
     default="checkpoints/idc/10.pt",
+=======
+    default="checkpoints/idc/03_crop/23.pt",
+>>>>>>> 📈 Refiner 훈련 시 wandb 연동
     help="A path of checkpoint (.pt) of the CR module",
 )
 parser.add_argument(
     "--denoiser_ckpt",
     type=str,
     required=False,
+<<<<<<< HEAD
     default="checkpoints/denoiser/multipie/40/model.safetensors",
+=======
+    default="checkpoints/denoiser/03_crop/70/model.safetensors",
+>>>>>>> 📈 Refiner 훈련 시 wandb 연동
     help="A path of checkpoint (.safetensors) of the denoiser",
 )
 parser.add_argument(
     "--save_model_epoch",
     type=int,
-    default=4,
+    default=5,
     help="A number of epoch to save current model",
 )
 parser.add_argument(
@@ -105,7 +117,7 @@ def ddim_sample(
     for t in scheduler.timesteps:
         t_batch = torch.full((args.batch_size,), t).to(accelerator.device)
         # print("🍊", latents.shape, t_batch.shape, cr_face.shape, cr_latent.shape)
-        noise_pred = unet(latents, t_batch, cr_face, cr_latent)
+        noise_pred = unet(latents, t_batch, cr_face, cr_latent).sample
 
         latents = scheduler.step(noise_pred, t, latents, eta=0.0).prev_sample
 
@@ -158,7 +170,7 @@ def train_loop(
         )
 
         with accelerator.accumulate(model):
-            noise_pred = model(noisy_latent, timesteps, cr_face, cr_latent)
+            noise_pred = model(noisy_latent, timesteps, cr_face, cr_latent).sample
             loss = F.mse_loss(noise_pred, noise)
             accelerator.backward(loss)
 
@@ -179,10 +191,13 @@ def train_loop(
         }
         progress_bar.set_postfix(**logs)
 
+        if accelerator.is_local_main_process:
+            wandb.log({"train_loss": loss})
+
     progress_bar.close()
     accelerator.wait_for_everyone()
 
-    if epoch % args.save_model_epoch == 0 or epoch == args.num_epoch - 1:
+    if epoch % args.save_model_epoch == 0 or epoch == args.num_epochs - 1:
         accelerator.save_state("./checkpoints/refiner/%s/%d" % (args.name, epoch))
 
     gc.collect()
@@ -239,18 +254,17 @@ def val_loop(
             )
 
     if accelerator.is_local_main_process:
-        print(
-            "✅ PSNR=%.4f / SSIM=%.4f / LPIPS=%.4f / NIQE=%.4f"
-            % (
-                scores[0] / len(val_dataloader),
-                scores[1] / len(val_dataloader),
-                scores[2] / len(val_dataloader),
-                scores[3] / len(val_dataloader),
-            ),
-            file=sys.stderr,
+        wandb.log(
+            {
+                "psnr": scores[0] / len(val_dataloader),
+                "ssim": scores[1] / len(val_dataloader),
+                "lpips": scores[2] / len(val_dataloader),
+                "niqe": scores[3] / len(val_dataloader),
+            }
         )
 
 
+<<<<<<< HEAD
 train_dataset = MultiPIEDataset(
     dataroot="../../datasets/multipie_crop_patch_v2",
     use="train",
@@ -264,6 +278,14 @@ val_dataset = MultiPIEDataset(
     use_patch=False,
 )
 
+=======
+train_dataset = KfaceCropDataset(
+    dataroot="../../datasets/kface_crop", use="train", includes_patches=False
+)
+val_dataset = KfaceCropDataset(
+    dataroot="../../datasets/kface_crop", use="val", includes_patches=False
+)
+>>>>>>> 📈 Refiner 훈련 시 wandb 연동
 train_dataloader = DataLoader(
     dataset=train_dataset, batch_size=args.batch_size, shuffle=True
 )
@@ -278,7 +300,7 @@ optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
 lr_scheduler = get_cosine_schedule_with_warmup(
     optimizer=optimizer,
     num_warmup_steps=500,
-    num_training_steps=(len(train_dataloader) * args.num_epoch),
+    num_training_steps=(len(train_dataloader) * args.num_epochs),
 )
 
 accelerator = Accelerator()
@@ -294,12 +316,27 @@ cr_module = CoarseRestoration().to(accelerator.device)
 cr_module.load_state_dict(torch.load(args.cr_ckpt)["model_state_dict"])
 cr_module.eval()
 
+
+if accelerator.is_local_main_process:
+    wandb.init(
+        # Set the project where this run will be logged
+        project="hifi_refiner",
+        # We pass a run name (otherwise it’ll be randomly assigned, like sunshine-lollypop-10)
+        name=f"03_crop",
+        # Track hyperparameters and run metadata
+        config={
+            "architecture": "HifiDiff",
+            "dataset": "kface_crop",
+            "epochs": args.num_epochs,
+        },
+    )
+
 metrics = []
 for i, metric_name in enumerate(["psnr", "ssim", "lpips", "niqe"]):
     metric = pyiqa.create_metric(metric_name, device=accelerator.device)
     metrics.append(metric)
 
-for epoch in range(args.num_epoch):
+for epoch in range(args.num_epochs):
     train_loop(
         model,
         vae,
@@ -321,3 +358,6 @@ for epoch in range(args.num_epoch):
         accelerator,
         metrics,
     )
+
+if accelerator.is_local_main_process:
+    wandb.finish()

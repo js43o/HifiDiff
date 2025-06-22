@@ -143,12 +143,17 @@ class FusedDenoiser(nn.Module):
     def __init__(self, latent_res):
         super().__init__()
 
+        self.width = 32 * 4
         self.dtype = torch.float32
         self.device = torch.device("cuda")
+
         self.config = ConfigMixin()
         self.config.in_channels = 4
         self.config.sample_size = latent_res
+<<<<<<< HEAD
         self.width = 32 * 4
+=======
+>>>>>>> 📈 Refiner 훈련 시 wandb 연동
 
         fourier_dim = self.width
         sinu_pos_emb = SinusoidalPosEmb(fourier_dim)
@@ -201,9 +206,13 @@ class FusedDenoiser(nn.Module):
             *[ConditionalNAFBlock(chan, time_dim) for _ in range(8)]
         )
         self.idc_conv = nn.Conv2d(
+<<<<<<< HEAD
             2048,
             (self.width * (2**4)) * (self.config.sample_size // (2**4)) ** 2,
             (1, 1),
+=======
+            2048, (self.width * (2**4)) * (latent_res // (2**4)) ** 2, (1, 1)
+>>>>>>> 📈 Refiner 훈련 시 wandb 연동
         )
         self.hcas.append(HybridCrossAttention(chan))
 
@@ -258,4 +267,6 @@ class FusedDenoiser(nn.Module):
         x = self.ending(x)
         x = x[..., :height, :width]
 
-        return x
+        result = UNet2DOutput(x)
+
+        return result
