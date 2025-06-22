@@ -143,12 +143,13 @@ class FusedDenoiser(nn.Module):
     def __init__(self, latent_res):
         super().__init__()
 
+        self.width = 32 * 4
         self.dtype = torch.float32
         self.device = torch.device("cuda")
+
         self.config = ConfigMixin()
         self.config.in_channels = 4
         self.config.sample_size = latent_res
-        self.width = 32
 
         fourier_dim = self.width
         sinu_pos_emb = SinusoidalPosEmb(fourier_dim)
@@ -162,7 +163,7 @@ class FusedDenoiser(nn.Module):
         )
 
         self.intro = nn.Conv2d(
-            in_channels=self.latent_channel,
+            in_channels=self.config.in_channels,
             out_channels=self.width,
             kernel_size=3,
             padding=1,
@@ -172,7 +173,7 @@ class FusedDenoiser(nn.Module):
         )
         self.ending = nn.Conv2d(
             in_channels=self.width,
-            out_channels=self.latent_channel,
+            out_channels=self.config.in_channels,
             kernel_size=3,
             padding=1,
             stride=1,
@@ -201,7 +202,7 @@ class FusedDenoiser(nn.Module):
             *[ConditionalNAFBlock(chan, time_dim) for _ in range(8)]
         )
         self.idc_conv = nn.Conv2d(
-            2048, (self.width * (2**4)) * (self.latent_res // (2**4)) ** 2, (1, 1)
+            2048, (self.width * (2**4)) * (latent_res // (2**4)) ** 2, (1, 1)
         )
         self.hcas.append(HybridCrossAttention(chan))
 
@@ -256,4 +257,6 @@ class FusedDenoiser(nn.Module):
         x = self.ending(x)
         x = x[..., :height, :width]
 
-        return x
+        result = UNet2DOutput(x)
+
+        return result

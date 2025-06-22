@@ -8,9 +8,9 @@ from diffusers.optimization import get_cosine_schedule_with_warmup
 from accelerate import Accelerator
 from tqdm.auto import tqdm
 import argparse
-import sys
 import gc
 import pyiqa
+import wandb
 
 from dataset import KfaceCropDataset
 from models.refiner import FacialRefiner
@@ -23,7 +23,7 @@ parser.add_argument(
     default="0",
     help="A number for checkpoints and output path names",
 )
-parser.add_argument("--num_epoch", type=int, default=24, help="A number of epoch")
+parser.add_argument("--num_epochs", type=int, default=24, help="A number of epoch")
 parser.add_argument(
     "--batch_size", type=int, default=8, help="A batch size of training dataset"
 )
@@ -40,27 +40,27 @@ parser.add_argument(
     "--cr_ckpt",
     type=str,
     required=False,
-    default="checkpoints/cr/24.pt",
+    default="checkpoints/cr/03_crop/23.pt",
     help="A path of checkpoint (.pt) of the CR module",
 )
 parser.add_argument(
     "--idc_ckpt",
     type=str,
     required=False,
-    default="checkpoints/idc/24.pt",
+    default="checkpoints/idc/03_crop/23.pt",
     help="A path of checkpoint (.pt) of the CR module",
 )
 parser.add_argument(
     "--denoiser_ckpt",
     type=str,
     required=False,
-    default="checkpoints/denoiser/295.pt",
-    help="A path of checkpoint (.pt) of the denoiser",
+    default="checkpoints/denoiser/03_crop/70/model.safetensors",
+    help="A path of checkpoint (.safetensors) of the denoiser",
 )
 parser.add_argument(
     "--save_model_epoch",
     type=int,
-    default=4,
+    default=5,
     help="A number of epoch to save current model",
 )
 parser.add_argument(
@@ -105,7 +105,7 @@ def ddim_sample(
     for t in scheduler.timesteps:
         t_batch = torch.full((args.batch_size,), t).to(accelerator.device)
         # print("🍊", latents.shape, t_batch.shape, cr_face.shape, cr_latent.shape)
-        noise_pred = unet(latents, t_batch, cr_face, cr_latent)
+        noise_pred = unet(latents, t_batch, cr_face, cr_latent).sample
 
         latents = scheduler.step(noise_pred, t, latents, eta=0.0).prev_sample
 
@@ -133,7 +133,7 @@ def train_loop(
     global_step = 0
     model.train()
 
-    for ln_face, hf_face, _ in train_dataloader:
+    for ln_face, hf_face in train_dataloader:
         train_loss = 0.0
         hf_latent = (
             vae.encode(
@@ -158,7 +158,7 @@ def train_loop(
         )
 
         with accelerator.accumulate(model):
-            noise_pred = model(noisy_latent, timesteps, cr_face, cr_latent)
+            noise_pred = model(noisy_latent, timesteps, cr_face, cr_latent).sample
             loss = F.mse_loss(noise_pred, noise)
             accelerator.backward(loss)
 
@@ -179,10 +179,13 @@ def train_loop(
         }
         progress_bar.set_postfix(**logs)
 
+        if accelerator.is_local_main_process:
+            wandb.log({"train_loss": loss})
+
     progress_bar.close()
     accelerator.wait_for_everyone()
 
-    if epoch % args.save_model_epoch == 0 or epoch == args.num_epoch - 1:
+    if epoch % args.save_model_epoch == 0 or epoch == args.num_epochs - 1:
         accelerator.save_state("./checkpoints/refiner/%s/%d" % (args.name, epoch))
 
     gc.collect()
@@ -199,7 +202,7 @@ def val_loop(
     scores = [0.0, 0.0, 0.0, 0.0]
     model.eval()
 
-    for idx, (ln_face, hf_face, _) in enumerate(val_dataloader):
+    for idx, (ln_face, hf_face) in enumerate(val_dataloader):
         unet = accelerator.unwrap_model(model)
         result = ddim_sample(ln_face, unet, vae, cr_module, noise_scheduler)
         # result = F.interpolate(result, 128, mode="bicubic")
@@ -239,20 +242,22 @@ def val_loop(
             )
 
     if accelerator.is_local_main_process:
-        print(
-            "✅ PSNR=%.4f / SSIM=%.4f / LPIPS=%.4f / NIQE=%.4f"
-            % (
-                scores[0] / len(val_dataloader),
-                scores[1] / len(val_dataloader),
-                scores[2] / len(val_dataloader),
-                scores[3] / len(val_dataloader),
-            ),
-            file=sys.stderr,
+        wandb.log(
+            {
+                "psnr": scores[0] / len(val_dataloader),
+                "ssim": scores[1] / len(val_dataloader),
+                "lpips": scores[2] / len(val_dataloader),
+                "niqe": scores[3] / len(val_dataloader),
+            }
         )
 
 
-train_dataset = KfaceCropDataset(dataroot="../../datasets/kface", use="train")
-val_dataset = KfaceCropDataset(dataroot="../../datasets/kface", use="val")
+train_dataset = KfaceCropDataset(
+    dataroot="../../datasets/kface_crop", use="train", includes_patches=False
+)
+val_dataset = KfaceCropDataset(
+    dataroot="../../datasets/kface_crop", use="val", includes_patches=False
+)
 train_dataloader = DataLoader(
     dataset=train_dataset, batch_size=args.batch_size, shuffle=True
 )
@@ -267,7 +272,7 @@ optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
 lr_scheduler = get_cosine_schedule_with_warmup(
     optimizer=optimizer,
     num_warmup_steps=500,
-    num_training_steps=(len(train_dataloader) * args.num_epoch),
+    num_training_steps=(len(train_dataloader) * args.num_epochs),
 )
 
 accelerator = Accelerator()
@@ -283,12 +288,27 @@ cr_module = CoarseRestoration().to(accelerator.device)
 cr_module.load_state_dict(torch.load(args.cr_ckpt)["model_state_dict"])
 cr_module.eval()
 
+
+if accelerator.is_local_main_process:
+    wandb.init(
+        # Set the project where this run will be logged
+        project="hifi_refiner",
+        # We pass a run name (otherwise it’ll be randomly assigned, like sunshine-lollypop-10)
+        name=f"03_crop",
+        # Track hyperparameters and run metadata
+        config={
+            "architecture": "HifiDiff",
+            "dataset": "kface_crop",
+            "epochs": args.num_epochs,
+        },
+    )
+
 metrics = []
 for i, metric_name in enumerate(["psnr", "ssim", "lpips", "niqe"]):
     metric = pyiqa.create_metric(metric_name, device=accelerator.device)
     metrics.append(metric)
 
-for epoch in range(args.num_epoch):
+for epoch in range(args.num_epochs):
     train_loop(
         model,
         vae,
@@ -310,3 +330,6 @@ for epoch in range(args.num_epoch):
         accelerator,
         metrics,
     )
+
+if accelerator.is_local_main_process:
+    wandb.finish()
