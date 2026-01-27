@@ -5,8 +5,10 @@ from torchvision.utils import save_image
 from tqdm.auto import tqdm
 import wandb
 import argparse
+import gc
 
 from dataset import KfaceCropDataset
+from dataset_multipie import MultiPIEDataset
 from models.cr.model import CoarseRestoration
 from models.cr.loss import cr_loss
 
@@ -150,9 +152,23 @@ wandb.init(
     },
 )
 
-
+"""
 train_dataset = KfaceCropDataset(dataroot="../../datasets/kface_crop", use="train")
 val_dataset = KfaceCropDataset(dataroot="../../datasets/kface_crop", use="val")
+"""
+
+train_dataset = MultiPIEDataset(
+    dataroot="../../datasets/multipie_crop_patch_v2",
+    use="train",
+    use_blind=False,
+    use_patch=True,
+)
+val_dataset = MultiPIEDataset(
+    dataroot="../../datasets/multipie_crop_patch_v2",
+    use="test",
+    use_blind=False,
+    use_patch=True,
+)
 
 train_dataloader = DataLoader(
     dataset=train_dataset, batch_size=args.batch_size, shuffle=True

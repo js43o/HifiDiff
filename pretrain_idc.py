@@ -44,7 +44,9 @@ def train_loop(dataloader, cr_module, model, loss_fn, optimizer, current_epoch):
         if (batch_idx + 1) % 100 == 0:
             output = torch.concat((y, cr_pred, other))
             save_image(
-                output, "output/idc/%d.png" % (batch_idx + 1), nrow=cr_pred.shape[0]
+                output,
+                "output/idc/%d.png" % (batch_idx + 1),
+                nrow=cr_pred.shape[0],
             )
 
     torch.cuda.empty_cache()
@@ -134,14 +136,14 @@ for epoch in range(EPOCHS):
         loss_fn=idc_loss,
     )
 
-    if (epoch + 1) % 5 == 0 or (epoch + 1) == EPOCHS:
+    if epoch % 5 == 0 or epoch == EPOCHS - 1:
         torch.save(
             {
-                "epoch": epoch + 1,
+                "epoch": epoch,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
             },
-            "./checkpoints/idc/%d.pt" % (epoch + 1),
+            "./checkpoints/idc/%d.pt" % epoch,
         )
 
 print("✅ Done!")

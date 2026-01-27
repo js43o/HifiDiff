@@ -2,13 +2,12 @@ import os
 import torch
 from torch.utils.data import DataLoader
 from torchvision.utils import save_image
+from torchvision.transforms.functional import to_tensor
+from PIL import Image
 
 from dataset import KfaceDataset
 from models.cr.model import CoarseRestoration
 from models.cr.loss import cr_loss
-
-
-# os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -34,7 +33,7 @@ def infer_loop(dataloader, model, loss_fn):
     print("✅ done! (avg_loss=%.4f)" % (acc_loss))
 
 
-CHECKPOINT_PATH = "checkpoints/cr/24.pt"
+CHECKPOINT_PATH = "checkpoints/cr/03_crop/23.pt"
 BATCH_SIZE = 8
 
 infer_dataset = KfaceDataset(
@@ -50,6 +49,12 @@ checkpoint = torch.load(CHECKPOINT_PATH)
 model.load_state_dict(checkpoint["model_state_dict"])
 model.eval()
 
-infer_loop(dataloader=infer_dataloader, model=model, loss_fn=loss_fn)
+for i in range(2, 3):
+    img = Image.open("temp/E01/C%d.jpg" % i).resize((32, 32)).resize((128, 128))
+    img = to_tensor(img).unsqueeze(0).to(device=device)
+    pred = model(img)
+    save_image(pred, os.path.join("hello.png"))
+
+# infer_loop(dataloader=infer_dataloader, model=model, loss_fn=loss_fn)
 
 print("✅ Done!")
