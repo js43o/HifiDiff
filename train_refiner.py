@@ -12,7 +12,7 @@ import sys
 import gc
 import pyiqa
 
-from dataset import KfaceCropDataset
+from dataset_multipie import MultiPIEDataset
 from models.refiner import FacialRefiner
 from models.cr.model import CoarseRestoration
 
@@ -20,7 +20,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument(
     "--name",
     type=str,
-    default="0",
+    default="multipie",
     help="A number for checkpoints and output path names",
 )
 parser.add_argument("--num_epoch", type=int, default=24, help="A number of epoch")
@@ -40,22 +40,22 @@ parser.add_argument(
     "--cr_ckpt",
     type=str,
     required=False,
-    default="checkpoints/cr/24.pt",
+    default="checkpoints/cr/multipie/23.pt",
     help="A path of checkpoint (.pt) of the CR module",
 )
 parser.add_argument(
     "--idc_ckpt",
     type=str,
     required=False,
-    default="checkpoints/idc/24.pt",
+    default="checkpoints/idc/10.pt",
     help="A path of checkpoint (.pt) of the CR module",
 )
 parser.add_argument(
     "--denoiser_ckpt",
     type=str,
     required=False,
-    default="checkpoints/denoiser/295.pt",
-    help="A path of checkpoint (.pt) of the denoiser",
+    default="checkpoints/denoiser/multipie/40/model.safetensors",
+    help="A path of checkpoint (.safetensors) of the denoiser",
 )
 parser.add_argument(
     "--save_model_epoch",
@@ -133,7 +133,7 @@ def train_loop(
     global_step = 0
     model.train()
 
-    for ln_face, hf_face, _ in train_dataloader:
+    for ln_face, hf_face in train_dataloader:
         train_loss = 0.0
         hf_latent = (
             vae.encode(
@@ -199,7 +199,7 @@ def val_loop(
     scores = [0.0, 0.0, 0.0, 0.0]
     model.eval()
 
-    for idx, (ln_face, hf_face, _) in enumerate(val_dataloader):
+    for idx, (ln_face, hf_face) in enumerate(val_dataloader):
         unet = accelerator.unwrap_model(model)
         result = ddim_sample(ln_face, unet, vae, cr_module, noise_scheduler)
         # result = F.interpolate(result, 128, mode="bicubic")
@@ -251,12 +251,23 @@ def val_loop(
         )
 
 
-train_dataset = KfaceCropDataset(dataroot="../../datasets/kface", use="train")
-val_dataset = KfaceCropDataset(dataroot="../../datasets/kface", use="val")
+train_dataset = MultiPIEDataset(
+    dataroot="../../datasets/multipie_crop_patch_v2",
+    use="train",
+    use_blind=False,
+    use_patch=False,
+)
+val_dataset = MultiPIEDataset(
+    dataroot="../../datasets/multipie_crop_patch_v2",
+    use="test",
+    use_blind=False,
+    use_patch=False,
+)
+
 train_dataloader = DataLoader(
     dataset=train_dataset, batch_size=args.batch_size, shuffle=True
 )
-val_dataloader = DataLoader(dataset=val_dataset, batch_size=args.batch_size)
+val_dataloader = DataLoader(dataset=val_dataset, batch_size=args.sample_size)
 
 model = FacialRefiner(args.image_res // 8, args.idc_ckpt, args.denoiser_ckpt)
 
@@ -277,7 +288,7 @@ train_dataloader, model, optimizer, lr_scheduler = accelerator.prepare(
 val_dataloader, model = accelerator.prepare(val_dataloader, model)
 
 vae = AutoencoderKL.from_pretrained(
-    "stabilityai/stable-diffusion-2-1", subfolder="vae"
+    "Manojb/stable-diffusion-2-1-base", subfolder="vae"
 ).to(accelerator.device)
 cr_module = CoarseRestoration().to(accelerator.device)
 cr_module.load_state_dict(torch.load(args.cr_ckpt)["model_state_dict"])

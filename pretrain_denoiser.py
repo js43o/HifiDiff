@@ -12,7 +12,7 @@ import wandb
 
 
 from models.denoiser.model import Denoiser
-from dataset import KfaceCropHRDataset, KfaceHRDataset, CelebAHQDataset
+from dataset import MultiPIEHRDataset, CelebAHQDataset
 
 
 parser = argparse.ArgumentParser()
@@ -45,13 +45,13 @@ parser.add_argument(
 parser.add_argument(
     "--save_model_epoch",
     type=int,
-    default=5,
+    default=10,
     help="A number of epoch to save current model",
 )
 parser.add_argument(
     "--save_image_epoch",
     type=int,
-    default=1,
+    default=10,
     help="A number of epoch to save sample images",
 )
 args = parser.parse_args()
@@ -85,7 +85,7 @@ def ddim_sample(model, vae, scheduler, epoch):
         os.path.join("output/denoiser/%s" % args.name, "%d.png" % epoch),
         nrow=2,
         normalize=True,
-        value_range=(0, 1),
+        value_range=(-1, 1),
     )
 
 
@@ -166,22 +166,22 @@ def train_loop(
     accelerator.end_training()
 
 
-train_dataset_kface_crop = KfaceCropHRDataset(
-    dataroot="../../datasets/kface_crop", res=args.image_res
+train_dataset_multipie = MultiPIEHRDataset(
+    dataroot="../../datasets/multipie_validation_128/gt", res=args.image_res
 )
 train_dataset_celeba = CelebAHQDataset(
     dataroot="../../datasets/celeba_hq_aligned", res=args.image_res
 )
 train_dataset = torch.utils.data.ConcatDataset(
-    [train_dataset_kface_crop, train_dataset_celeba]
+    [train_dataset_multipie, train_dataset_celeba]
 )
 
 train_dataloader = torch.utils.data.DataLoader(
-    train_dataset, batch_size=args.batch_size, shuffle=True
+    train_dataset_multipie, batch_size=args.batch_size, shuffle=True
 )
 
 model = Denoiser(latent_res=args.image_res // 8)
-vae = AutoencoderKL.from_pretrained("stabilityai/stable-diffusion-2-1", subfolder="vae")
+vae = AutoencoderKL.from_pretrained("Manojb/stable-diffusion-2-1-base", subfolder="vae")
 ddpm_scheduler = DDPMScheduler(num_train_timesteps=1000)
 ddim_scheduler = DDIMScheduler()
 ddim_scheduler.set_timesteps(50)
@@ -214,7 +214,7 @@ if accelerator.is_local_main_process:
         # Track hyperparameters and run metadata
         config={
             "architecture": "HifiDiff",
-            "dataset": "kface_crop",
+            "dataset": "multipie_crop",
             "epochs": args.num_epochs,
         },
     )

@@ -9,7 +9,7 @@ class FacialPriorGuidance(nn.Module):
         super().__init__()
 
         img_channel = 4
-        width = 32
+        width = 32 * 4
 
         self.intro = nn.Conv2d(
             in_channels=img_channel,

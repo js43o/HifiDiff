@@ -389,6 +389,28 @@ class KfaceHRDataset(Dataset):  # for pre-train the denoiser
         return len(self.imgs)
 
 
+class MultiPIEHRDataset(Dataset):
+    def __init__(self, dataroot: str, res=128):
+        super().__init__()
+        self.res = res
+        self.imgs = []
+
+        for filename in sorted(os.listdir(dataroot)):
+            img_path = os.path.join(dataroot, filename)
+            if os.path.exists(img_path):
+                self.imgs.append(img_path)
+
+    def __getitem__(self, index):
+        img = Image.open(self.imgs[index]).convert("RGB")
+
+        img = img.resize((self.res, self.res), Image.Resampling.BICUBIC)
+
+        return (F.to_tensor(img) - 0.5) * 2.0
+
+    def __len__(self):
+        return len(self.imgs)
+
+
 class KfaceCropHRDataset(Dataset):  # for pre-train the denoiser
     def __init__(self, dataroot: str, res=128):
         super().__init__()
@@ -438,7 +460,7 @@ class CelebAHQDataset(Dataset):  # for pre-train the denoiser
         img = Image.open(self.imgs[index]).convert("RGB")
         img = img.resize((self.res, self.res), Image.Resampling.BICUBIC)
 
-        return F.to_tensor(img)
+        return (F.to_tensor(img) - 0.5) * 2.0
 
     def __len__(self):
         return len(self.imgs)

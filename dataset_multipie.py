@@ -291,3 +291,84 @@ class MultiPIEDatasetForInference(Dataset):
 
     def __len__(self):
         return len(self.images)
+
+
+class MultiPIEDatasetIDC(Dataset):  # for pre-train the IDC module
+    def __init__(self, dataroot: str, use="train", res=128):
+        super().__init__()
+        self.dataroot = os.path.join(dataroot, use)
+        self.res = res
+
+        self.input_paths = []
+        self.gt_paths = []
+        self.other_paths = []
+
+        angles = [*ANGLES_EXTREME, *ANGLES_MODERATE]
+        gt_angles = GT_ANGLES_FRONTAL
+
+        pids = sorted(os.listdir(self.dataroot))
+        for pid in pids:
+            for idx, angle in enumerate(angles):
+                for light in LIGHT_COND:
+                    gt_angle = gt_angles[0] if idx < len(angles) // 2 else gt_angles[1]
+                    gt_path = os.path.join(
+                        self.dataroot, pid, gt_angle, "%s.png" % light
+                    )
+                    input_path = os.path.join(
+                        self.dataroot, pid, angle, "%s.png" % light
+                    )
+                    if all(map(os.path.exists, [gt_path, input_path])):
+                        self.input_paths.append(input_path)
+                        self.gt_paths.append(gt_path)
+
+                    while True:
+                        other_pids = [*pids]
+                        other_pids.remove(pid)
+                        other_pid = random.sample(other_pids, 1)[0]
+                        other_path = os.path.join(
+                            self.dataroot, other_pid, gt_angle, "%s.png" % light
+                        )
+                        if os.path.exists(other_path):
+                            self.other_paths.append(other_path)
+                            break
+
+    def __getitem__(self, index):
+        input_image = cv2.imread(self.input_paths[index])
+        gt_image = cv2.imread(self.gt_paths[index])
+        other_image = cv2.imread(self.other_paths[index])
+
+        input_image = cv2.resize(
+            input_image, dsize=(self.res, self.res), interpolation=cv2.INTER_CUBIC
+        )
+        gt_image = cv2.resize(
+            gt_image, dsize=(self.res, self.res), interpolation=cv2.INTER_CUBIC
+        )
+        other_image = cv2.resize(
+            other_image, dsize=(self.res, self.res), interpolation=cv2.INTER_CUBIC
+        )
+
+        input_image = input_image.astype(np.float32) / 255.0
+        gt_image = gt_image.astype(np.float32) / 255.0
+        other_image = other_image.astype(np.float32) / 255.0
+
+        input_image = cv2.resize(
+            input_image,
+            dsize=(self.res // 4, self.res // 4),
+            interpolation=cv2.INTER_CUBIC,
+        )
+        input_image = cv2.resize(
+            input_image, dsize=(self.res, self.res), interpolation=cv2.INTER_CUBIC
+        )
+
+        # BGR to RGB, HWC to CHW, numpy to tensor
+        gt_image, input_image, other_image = img2tensor(
+            [gt_image, input_image, other_image], bgr2rgb=True, float32=True
+        )
+
+        # round and clip
+        input_image = torch.clamp((input_image * 255.0).round(), 0, 255) / 255.0
+
+        return input_image, gt_image, other_image
+
+    def __len__(self):
+        return len(self.gt_paths)

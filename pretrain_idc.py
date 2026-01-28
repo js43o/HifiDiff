@@ -6,11 +6,10 @@ from tqdm.auto import tqdm
 import wandb
 import gc
 
-from dataset import KfaceCropDataset_IDC
+from dataset_multipie import MultiPIEDatasetIDC
 from models.cr.model import CoarseRestoration
 from models.idc.model import ResNet50
 
-# os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -79,9 +78,9 @@ def val_loop(dataloader, cr_module, model, loss_fn):
 
 
 LEARNING_RATE = 5e-4
-BATCH_SIZE = 56
+BATCH_SIZE = 24
 EPOCHS = 24
-CR_CHECKPOINT_PATH = "checkpoints/cr/03_crop/23.pt"
+CR_CHECKPOINT_PATH = "checkpoints/cr/multipie/23.pt"
 
 wandb.init(
     # Set the project where this run will be logged
@@ -97,13 +96,13 @@ wandb.init(
     },
 )
 
-train_dataset = KfaceCropDataset_IDC(
-    dataroot="../../datasets/kface_crop",
+train_dataset = MultiPIEDatasetIDC(
+    dataroot="../../datasets/multipie_crop_patch_v2",
     use="train",
 )
-val_dataset = KfaceCropDataset_IDC(
-    dataroot="../../datasets/kface_crop",
-    use="val",
+val_dataset = MultiPIEDatasetIDC(
+    dataroot="../../datasets/multipie_crop_patch_v2",
+    use="test",
 )
 
 train_dataloader = DataLoader(

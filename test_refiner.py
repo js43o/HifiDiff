@@ -174,7 +174,7 @@ accelerator = Accelerator()
 val_dataloader, model = accelerator.prepare(val_dataloader, model)
 
 vae = AutoencoderKL.from_pretrained(
-    "stabilityai/stable-diffusion-2-1", subfolder="vae"
+    "Manojb/stable-diffusion-2-1-base", subfolder="vae"
 ).to(accelerator.device)
 cr_module = CoarseRestoration().to(accelerator.device)
 cr_module.load_state_dict(torch.load(args.cr_ckpt)["model_state_dict"])
