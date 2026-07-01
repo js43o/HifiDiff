@@ -3,7 +3,7 @@ from torch.utils.data import DataLoader
 from torch.nn.functional import cosine_similarity
 from torchvision.utils import save_image
 
-from dataset import KfaceDataset_IDC
+from dataset_pretraining import KfaceDataset_IDC
 from models.cr.model import CoarseRestoration
 from models.idc.model import ResNet50
 
@@ -24,8 +24,13 @@ def test_loop(dataloader, cr_module, model):
                 cosine_similarity(id_cr, id_hf).mean().item(),
                 cosine_similarity(id_cr, id_ck).mean().item(),
             )
-            is_correct = sim_hf > sim_ck 
-            print("CR-HF vs. CR-CK:", round(sim_hf, 4), round(sim_ck, 4), "✅" if is_correct else "❌")
+            is_correct = sim_hf > sim_ck
+            print(
+                "CR-HF vs. CR-CK:",
+                round(sim_hf, 4),
+                round(sim_ck, 4),
+                "✅" if is_correct else "❌",
+            )
 
             accuracy += 1 if is_correct else 0
 

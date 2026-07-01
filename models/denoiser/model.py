@@ -30,16 +30,15 @@ class SinusoidalPosEmb(nn.Module):
 
 
 class Denoiser(nn.Module):
-    def __init__(self, latent_res):
+    def __init__(self, latent_size):
         super().__init__()
 
         self.width = 32 * 4
         self.dtype = torch.float32
-        self.device = torch.device("cuda")
 
         self.config = ConfigMixin()
         self.config.in_channels = 4
-        self.config.sample_size = latent_res
+        self.config.sample_size = latent_size
 
         fourier_dim = self.width
         sinu_pos_emb = SinusoidalPosEmb(fourier_dim)
@@ -105,12 +104,8 @@ class Denoiser(nn.Module):
             )
 
     def forward(self, latents, timesteps):
-        if (
-            isinstance(timesteps, int)
-            or isinstance(timesteps, float)
-            or len(timesteps.shape) == 0
-        ):
-            timesteps = torch.full((latents.shape[0],), timesteps).to(self.device)
+        if isinstance(timesteps, (int, float)) or len(timesteps.shape) == 0:
+            timesteps = torch.full((latents.shape[0],), timesteps).to(latents.device)
 
         x = latents
         _, _, height, width = x.shape
@@ -140,20 +135,15 @@ class Denoiser(nn.Module):
 
 
 class FusedDenoiser(nn.Module):
-    def __init__(self, latent_res):
+    def __init__(self, latent_size):
         super().__init__()
 
         self.width = 32 * 4
         self.dtype = torch.float32
-        self.device = torch.device("cuda")
 
         self.config = ConfigMixin()
         self.config.in_channels = 4
-        self.config.sample_size = latent_res
-<<<<<<< HEAD
-        self.width = 32 * 4
-=======
->>>>>>> 📈 Refiner 훈련 시 wandb 연동
+        self.config.sample_size = latent_size
 
         fourier_dim = self.width
         sinu_pos_emb = SinusoidalPosEmb(fourier_dim)
@@ -206,13 +196,7 @@ class FusedDenoiser(nn.Module):
             *[ConditionalNAFBlock(chan, time_dim) for _ in range(8)]
         )
         self.idc_conv = nn.Conv2d(
-<<<<<<< HEAD
-            2048,
-            (self.width * (2**4)) * (self.config.sample_size // (2**4)) ** 2,
-            (1, 1),
-=======
-            2048, (self.width * (2**4)) * (latent_res // (2**4)) ** 2, (1, 1)
->>>>>>> 📈 Refiner 훈련 시 wandb 연동
+            2048, (self.width * (2**4)) * (latent_size // (2**4)) ** 2, (1, 1)
         )
         self.hcas.append(HybridCrossAttention(chan))
 
@@ -231,8 +215,18 @@ class FusedDenoiser(nn.Module):
             self.hcas.append(HybridCrossAttention(chan))
 
     def forward(self, latents, timesteps, facial_priors, identity_embedding):
-        if isinstance(timesteps, int) or isinstance(timesteps, float):
-            timesteps = torch.tensor([timesteps])
+        if isinstance(timesteps, (int, float)) or len(timesteps.shape) == 0:
+            timesteps = torch.full(
+                (latents.shape[0],),
+                timesteps,
+                device=latents.device,
+                dtype=torch.float32,
+            )
+        else:
+            timesteps = timesteps.to(device=latents.device, dtype=torch.float32)
+
+        if timesteps.shape[0] == 1 and latents.shape[0] > 1:
+            timesteps = timesteps.expand(latents.shape[0])
 
         x = latents
         batch, _, height, width = x.shape

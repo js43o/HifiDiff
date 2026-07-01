@@ -5,7 +5,7 @@ from torchvision.utils import save_image
 from torchvision.transforms.functional import to_tensor
 from PIL import Image
 
-from dataset import KfaceDataset
+from dataset_pretraining import KfaceDataset
 from models.cr.model import CoarseRestoration
 from models.cr.loss import cr_loss
 

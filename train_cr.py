@@ -7,11 +7,10 @@ import wandb
 import argparse
 import gc
 
-from dataset import KfaceCropDataset
+from dataset_pretraining import KfaceCropDataset
 from dataset_multipie import MultiPIEDataset
 from models.cr.model import CoarseRestoration
 from models.cr.loss import cr_loss
-
 
 parser = argparse.ArgumentParser()
 parser.add_argument(

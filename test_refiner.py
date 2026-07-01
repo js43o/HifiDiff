@@ -11,7 +11,7 @@ import sys
 import pyiqa
 from safetensors.torch import load_file
 
-from dataset import KfaceDataset
+from dataset_pretraining import KfaceDataset
 from models.refiner import FacialRefiner
 from models.cr.model import CoarseRestoration
 

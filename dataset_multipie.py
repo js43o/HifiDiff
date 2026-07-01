@@ -37,14 +37,14 @@ class MultiPIEDataset(Dataset):
         self,
         dataroot: str,
         model_type="uni",
-        use="train",
-        res=128,
-        use_blind=False,  # using blind degradation model
+        phase="train",
+        size=128,
+        use_blind=True,  # using blind degradation model
         use_patch=False,  # using facial components patches
     ):
         super().__init__()
-        self.dataroot = os.path.join(dataroot, use)
-        self.res = res
+        self.dataroot = os.path.join(dataroot, phase)
+        self.size = size
         self.use_blind = use_blind
         self.use_patch = use_patch
 
@@ -90,13 +90,6 @@ class MultiPIEDataset(Dataset):
         input_image = cv2.imread(self.input_paths[index])
         gt_image = cv2.imread(self.gt_paths[index])
 
-        input_image = cv2.resize(
-            input_image, dsize=(self.res, self.res), interpolation=cv2.INTER_CUBIC
-        )
-        gt_image = cv2.resize(
-            gt_image, dsize=(self.res, self.res), interpolation=cv2.INTER_CUBIC
-        )
-
         # random horizontal flip
         input_image, _status = augment(
             input_image, hflip=True, rotation=False, return_status=True
@@ -110,28 +103,28 @@ class MultiPIEDataset(Dataset):
 
         if self.use_blind:
             # blur
-            cur_kernel_size = random.randint(19, 20) * 2 + 1
+            cur_kernel_size = random.randint(4, 5) * 2 + 1
             kernel = degradations.random_mixed_kernels(
                 ["iso", "aniso"],
                 [0.5, 0.5],
                 cur_kernel_size,
-                [0.1, 2.0],
-                [0.1, 2.0],
+                [0.1, 1.0],
+                [0.1, 1.0],
                 [-math.pi, math.pi],
                 noise_range=None,
             )
             input_image = cv2.filter2D(input_image, -1, kernel)
 
             # downsample
-            scale = np.random.uniform(0.8, 8.0)
+            scale = np.random.uniform(1.0, 8.0)
             input_image = cv2.resize(
                 input_image,
-                (int(self.res // scale), int(self.res // scale)),
+                (int(128 // scale), int(128 // scale)),
                 interpolation=cv2.INTER_LINEAR,
             )
 
             # noise
-            input_image = degradations.random_add_gaussian_noise(input_image, [0, 10])
+            input_image = degradations.random_add_gaussian_noise(input_image, [0, 5])
 
             # jpeg compression
             input_image = degradations.random_add_jpg_compression(
@@ -140,7 +133,7 @@ class MultiPIEDataset(Dataset):
 
             # resize to original size
             input_image = cv2.resize(
-                input_image, (self.res, self.res), interpolation=cv2.INTER_LINEAR
+                input_image, (self.size, self.size), interpolation=cv2.INTER_LINEAR
             )
 
             # random color jitter
@@ -154,13 +147,15 @@ class MultiPIEDataset(Dataset):
 
         else:
             input_image = cv2.resize(
-                input_image,
-                dsize=(self.res // 4, self.res // 4),
-                interpolation=cv2.INTER_CUBIC,
+                input_image, dsize=(32, 32), interpolation=cv2.INTER_CUBIC
             )
-            input_image = cv2.resize(
-                input_image, dsize=(self.res, self.res), interpolation=cv2.INTER_CUBIC
-            )
+
+        input_image = cv2.resize(
+            input_image, dsize=(self.size, self.size), interpolation=cv2.INTER_CUBIC
+        )
+        gt_image = cv2.resize(
+            gt_image, dsize=(self.size, self.size), interpolation=cv2.INTER_CUBIC
+        )
 
         # BGR to RGB, HWC to CHW, numpy to tensor
         gt_image, input_image = img2tensor(
@@ -174,7 +169,7 @@ class MultiPIEDataset(Dataset):
             gt_patch = to_tensor(
                 Image.open(self.gt_patch_paths[index])
                 .convert("RGB")
-                .resize((self.res, self.res), Image.Resampling.BICUBIC)
+                .resize((self.size, self.size), Image.Resampling.BICUBIC)
             )
 
             return input_image, gt_image, gt_patch
@@ -186,10 +181,10 @@ class MultiPIEDataset(Dataset):
 
 
 class MultiPIEDatasetWithSingleView(Dataset):
-    def __init__(self, dataroot: str, angle: str, use="train", res=128):
+    def __init__(self, dataroot: str, angle: str, phase="train", size=128):
         super().__init__()
-        self.dataroot = os.path.join(dataroot, use)
-        self.res = res
+        self.dataroot = os.path.join(dataroot, phase)
+        self.size = size
         self.angle = angle
 
         self.input_paths = []
@@ -231,12 +226,14 @@ class MultiPIEDatasetWithSingleView(Dataset):
         input_image = input_image.resize(
             (32, 32), Image.Resampling.BICUBIC
         )  # make it low-resolution
-        input_image = input_image.resize((self.res, self.res), Image.Resampling.BICUBIC)
-        gt_image = gt_image.resize((self.res, self.res), Image.Resampling.BICUBIC)
+        input_image = input_image.resize(
+            (self.size, self.size), Image.Resampling.BICUBIC
+        )
+        gt_image = gt_image.resize((self.size, self.size), Image.Resampling.BICUBIC)
         gt_patch = (
             Image.open(self.gt_patches[index])
             .convert("RGB")
-            .resize((self.res, self.res), Image.Resampling.BICUBIC)
+            .resize((self.size, self.size), Image.Resampling.BICUBIC)
         )
 
         return (
@@ -251,10 +248,10 @@ class MultiPIEDatasetWithSingleView(Dataset):
 
 
 class MultiPIEDatasetForInference(Dataset):
-    def __init__(self, dataroot: str, model_type="uni", use="train", res=128):
+    def __init__(self, dataroot: str, model_type="uni", phase="train", size=128):
         super().__init__()
-        self.dataroot = os.path.join(dataroot, use)
-        self.res = res
+        self.dataroot = os.path.join(dataroot, phase)
+        self.size = size
 
         self.images = []
 
@@ -284,7 +281,7 @@ class MultiPIEDatasetForInference(Dataset):
     def __getitem__(self, index):
         image = Image.open(self.images[index]).convert("RGB")
         image = image.resize((32, 32), Image.Resampling.BICUBIC).resize(
-            (self.res, self.res), Image.Resampling.BICUBIC
+            (self.size, self.size), Image.Resampling.BICUBIC
         )  # make it low-resolution
 
         return to_tensor(image), self.images[index]
@@ -294,10 +291,10 @@ class MultiPIEDatasetForInference(Dataset):
 
 
 class MultiPIEDatasetIDC(Dataset):  # for pre-train the IDC module
-    def __init__(self, dataroot: str, use="train", res=128):
+    def __init__(self, dataroot: str, phase="train", res=128):
         super().__init__()
-        self.dataroot = os.path.join(dataroot, use)
-        self.res = res
+        self.dataroot = os.path.join(dataroot, phase)
+        self.size = res
 
         self.input_paths = []
         self.gt_paths = []
@@ -338,13 +335,13 @@ class MultiPIEDatasetIDC(Dataset):  # for pre-train the IDC module
         other_image = cv2.imread(self.other_paths[index])
 
         input_image = cv2.resize(
-            input_image, dsize=(self.res, self.res), interpolation=cv2.INTER_CUBIC
+            input_image, dsize=(self.size, self.size), interpolation=cv2.INTER_CUBIC
         )
         gt_image = cv2.resize(
-            gt_image, dsize=(self.res, self.res), interpolation=cv2.INTER_CUBIC
+            gt_image, dsize=(self.size, self.size), interpolation=cv2.INTER_CUBIC
         )
         other_image = cv2.resize(
-            other_image, dsize=(self.res, self.res), interpolation=cv2.INTER_CUBIC
+            other_image, dsize=(self.size, self.size), interpolation=cv2.INTER_CUBIC
         )
 
         input_image = input_image.astype(np.float32) / 255.0
@@ -353,11 +350,11 @@ class MultiPIEDatasetIDC(Dataset):  # for pre-train the IDC module
 
         input_image = cv2.resize(
             input_image,
-            dsize=(self.res // 4, self.res // 4),
+            dsize=(self.size // 4, self.size // 4),
             interpolation=cv2.INTER_CUBIC,
         )
         input_image = cv2.resize(
-            input_image, dsize=(self.res, self.res), interpolation=cv2.INTER_CUBIC
+            input_image, dsize=(self.size, self.size), interpolation=cv2.INTER_CUBIC
         )
 
         # BGR to RGB, HWC to CHW, numpy to tensor
@@ -372,3 +369,4 @@ class MultiPIEDatasetIDC(Dataset):  # for pre-train the IDC module
 
     def __len__(self):
         return len(self.gt_paths)
+
